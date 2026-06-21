@@ -68,9 +68,6 @@ instance/
 # Scrapy stuff:
 .scrapy
 
-# Sphinx documentation
-docs/_build/
-
 # PyBuilder
 .pybuilder/
 target/
@@ -195,12 +192,14 @@ cython_debug/
 .memory/
 .task_outputs/
 .tasks/
+.team/
 .teams/
+.logs/
 .mailboxes/
 .worktrees/
 .scheduled_tasks.json
 
-# Accidental root npm lockfile; web/package-lock.json is tracked.
+# Accidental root npm lockfile.
 /package-lock.json
 
 # Ruff stuff:
@@ -221,10 +220,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Web app
-web/node_modules/
-web/.next/
-web/out/
 .vercel
 .env*.local
 test_providers.py

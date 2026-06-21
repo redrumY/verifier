@@ -40,22 +40,27 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import uuid
 from pathlib import Path
 from queue import Queue
 
-from anthropic import Anthropic
 from dotenv import load_dotenv
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from harness.model_gateway import ModelGateway
 
 load_dotenv(override=True)
 if os.getenv("ANTHROPIC_BASE_URL"):
     os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
 
 WORKDIR = Path.cwd()
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
-MODEL = os.environ["MODEL_ID"]
+GATEWAY = ModelGateway.from_env(call_log_path=WORKDIR / ".logs" / "model-calls.jsonl")
 
 TEAM_DIR = WORKDIR / ".team"
 INBOX_DIR = TEAM_DIR / "inbox"
@@ -68,6 +73,32 @@ IDLE_TIMEOUT = 60
 
 VALID_MSG_TYPES = {"message", "broadcast", "shutdown_request",
                    "shutdown_response", "plan_approval_response"}
+
+
+# === SECTION: model_gateway ===
+def gateway_role_for_teammate(role: str) -> str:
+    normalized = (role or "").lower()
+    if any(word in normalized for word in ("test", "qa", "verify")):
+        return "tester"
+    if any(word in normalized for word in ("review", "risk", "security")):
+        return "reviewer"
+    if any(word in normalized for word in ("summary", "summarize", "compact")):
+        return "summarizer"
+    if any(word in normalized for word in ("plan", "architect", "design")):
+        return "planner"
+    return "coder"
+
+
+def call_model(role: str, messages: list, system: str = None,
+               tools: list = None, max_tokens: int = 8000):
+    """Route every LLM call through the shared gateway boundary."""
+    return GATEWAY.call(
+        role=role,
+        messages=messages,
+        system=system,
+        tools=tools,
+        max_tokens=max_tokens,
+    ).raw
 
 
 # === SECTION: base_tools ===
@@ -180,7 +211,8 @@ def run_subagent(prompt: str, agent_type: str = "Explore") -> str:
     sub_msgs = [{"role": "user", "content": prompt}]
     resp = None
     for _ in range(30):
-        resp = client.messages.create(model=MODEL, messages=sub_msgs, tools=sub_tools, max_tokens=8000)
+        role = "planner" if agent_type == "Explore" else "coder"
+        resp = call_model(role, sub_msgs, tools=sub_tools, max_tokens=8000)
         sub_msgs.append({"role": "assistant", "content": resp.content})
         if resp.stop_reason != "tool_use":
             break
@@ -247,8 +279,8 @@ def auto_compact(messages: list) -> list:
         for msg in messages:
             f.write(json.dumps(msg, default=str) + "\n")
     conv_text = json.dumps(messages, default=str)[-80000:]
-    resp = client.messages.create(
-        model=MODEL,
+    resp = call_model(
+        "summarizer",
         messages=[{"role": "user", "content": f"Summarize for continuity:\n{conv_text}"}],
         max_tokens=2000,
     )
@@ -462,9 +494,12 @@ class TeammateManager:
                         return
                     messages.append({"role": "user", "content": json.dumps(msg)})
                 try:
-                    response = client.messages.create(
-                        model=MODEL, system=sys_prompt, messages=messages,
-                        tools=tools, max_tokens=8000)
+                    response = call_model(
+                        gateway_role_for_teammate(role),
+                        messages,
+                        system=sys_prompt,
+                        tools=tools,
+                        max_tokens=8000)
                 except Exception:
                     self._set_status(name, "shutdown")
                     return
@@ -669,9 +704,12 @@ def agent_loop(messages: list):
         if inbox:
             messages.append({"role": "user", "content": f"<inbox>{json.dumps(inbox, indent=2)}</inbox>"})
         # LLM call
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
-            tools=TOOLS, max_tokens=8000,
+        response = call_model(
+            "planner",
+            messages,
+            system=SYSTEM,
+            tools=TOOLS,
+            max_tokens=8000,
         )
         messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "tool_use":

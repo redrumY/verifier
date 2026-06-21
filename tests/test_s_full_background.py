@@ -62,6 +62,43 @@ class BackgroundManagerTests(unittest.TestCase):
 
             self.assertEqual(manager.check("abc123"), "[running] (running)")
 
+    def test_call_model_routes_through_gateway(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+
+            class FakeGateway:
+                def __init__(self):
+                    self.calls = []
+
+                def call(self, **kwargs):
+                    self.calls.append(kwargs)
+                    return types.SimpleNamespace(raw="raw-response")
+
+            fake_gateway = FakeGateway()
+            module.GATEWAY = fake_gateway
+
+            result = module.call_model(
+                "coder",
+                [{"role": "user", "content": "write code"}],
+                system="system",
+                tools=[{"name": "bash"}],
+                max_tokens=123,
+            )
+
+            self.assertEqual(result, "raw-response")
+            self.assertEqual(fake_gateway.calls[0]["role"], "coder")
+            self.assertEqual(fake_gateway.calls[0]["system"], "system")
+            self.assertEqual(fake_gateway.calls[0]["tools"], [{"name": "bash"}])
+            self.assertEqual(fake_gateway.calls[0]["max_tokens"], 123)
+
+    def test_teammate_roles_map_to_gateway_roles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+
+            self.assertEqual(module.gateway_role_for_teammate("QA tester"), "tester")
+            self.assertEqual(module.gateway_role_for_teammate("security reviewer"), "reviewer")
+            self.assertEqual(module.gateway_role_for_teammate("frontend engineer"), "coder")
+
 
 if __name__ == "__main__":
     unittest.main()
