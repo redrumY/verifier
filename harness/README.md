@@ -45,3 +45,38 @@ response = gateway.call(
 The verifier role is intentionally configured as non-LLM by default. Frontend
 builds, browser checks, and sandbox runs should be deterministic tool work
 first; LLM review can consume the resulting report later.
+
+## ContextManager
+
+`harness.context_manager.ContextManager` is the shared runtime boundary for
+multi-agent context isolation. It stores parent and child sessions separately,
+creates minimal task packs for child agents, archives full transcripts, and
+returns compact summaries to the parent session.
+
+Example:
+
+```python
+from harness.context_manager import ContextManager
+
+contexts = ContextManager(".")
+parent = contexts.create_session("planner", "Build a frontend project")
+task_pack = contexts.build_task_pack(
+    "coder",
+    "Create the Vite app",
+    acceptance_criteria=["npm run build succeeds"],
+    relevant_files=["package.json", "src/App.tsx"],
+    parent_session_id=parent.session_id,
+)
+child = contexts.create_child_session(task_pack)
+
+summary = contexts.complete_session(
+    child.session_id,
+    result="implemented",
+    decisions=["used Vite + React"],
+    files_changed=["package.json", "src/App.tsx"],
+)
+```
+
+Only the `SessionSummary` is attached back to the parent. The child transcript
+stays archived under `.context/transcripts/`, which keeps the parent prompt
+small while preserving auditability.

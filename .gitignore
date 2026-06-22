@@ -194,6 +194,7 @@ cython_debug/
 .tasks/
 .team/
 .teams/
+.context/
 .logs/
 .mailboxes/
 .worktrees/

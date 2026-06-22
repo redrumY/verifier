@@ -12,6 +12,7 @@ verification-first coding agent harness。
   -> agents/s_full.py
   -> harness.ModelGateway
   -> 按角色调用不同 agent
+  -> harness.ContextManager
   -> 工具 / task board / subagent
   -> 后续 verifier + sandbox report
 ```
@@ -91,6 +92,30 @@ CODER_MODEL_ID=...
 TESTER_TOKEN_BUDGET=50000
 ```
 
+## ContextManager 能力
+
+`harness/context_manager.py` 解决的是多 agent 的上下文边界问题：
+不要让子 agent 继承父 agent 的全部聊天记录，也不要把子 agent 的完整
+中间过程塞回父 agent。
+
+现在的策略是：
+
+- 父 agent 为子 agent 创建 `TaskPack`
+- `TaskPack` 只包含目标、验收标准、相关文件、上下文引用和约束
+- 子 agent 在独立 session 里工作
+- 子 agent 的完整 transcript 归档到 `.context/transcripts/`
+- 子 agent 完成后只把 `SessionSummary` 回传给父 agent
+- 长 tool result 会被截断，避免 prompt 被日志撑爆
+- session 可以 compact：保留摘要和最近消息
+
+这套机制对应面试里的回答就是：
+
+```text
+API 分配由 ModelGateway 做
+上下文隔离由 ContextManager 做
+父子 agent 之间传 task pack 和 summary，不共享完整上下文
+```
+
 ## 后续扩展路线
 
 不要继续把所有东西塞进 `agents/s_full.py`。后续模块应该放进 `harness/`：
@@ -98,7 +123,7 @@ TESTER_TOKEN_BUDGET=50000
 ```text
 harness/
   model_gateway.py       # 已完成
-  context_manager.py     # task pack、summary、transcript archive
+  context_manager.py     # 已完成
   frontend_generator.py  # 自然语言 -> Vite/React 工程
   sandbox_runner.py      # 独立目录、命令白名单、timeout
   verifier.py            # build/typecheck/Playwright/report

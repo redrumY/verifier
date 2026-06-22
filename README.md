@@ -14,6 +14,7 @@ User request
   -> agents/s_full.py
   -> harness.ModelGateway
   -> role-based agent calls
+  -> harness.ContextManager
   -> tools / task board / subagents
   -> future verifier + sandbox reports
 ```
@@ -62,6 +63,34 @@ MODEL_GATEWAY_TOKEN_BUDGET=200000
 Per-role overrides are also supported, for example `CODER_MODEL_ID` or
 `TESTER_TOKEN_BUDGET`.
 
+## ContextManager
+
+`harness/context_manager.py` keeps multi-agent context explicit instead of
+letting every subagent inherit the whole parent conversation.
+
+It provides:
+
+- parent and child session state under `.context/sessions/`
+- task packs with objective, acceptance criteria, relevant files, and context refs
+- transcript archives under `.context/transcripts/`
+- child summaries under `.context/summaries/`
+- deterministic compaction that keeps a summary plus recent messages
+- tool-result trimming so long command output does not explode the prompt
+
+The intended contract is:
+
+```text
+Parent agent
+  -> creates TaskPack for child
+  -> child works in isolated session
+  -> child transcript is archived
+  -> parent receives only SessionSummary
+```
+
+This gives later Planner / Coder / Tester / Reviewer agents a clean handoff
+boundary: private working context stays private, while decisions and artifacts
+return to the orchestrator.
+
 ## Next Extension Points
 
 The next modules should live under `harness/` instead of being added directly to
@@ -70,7 +99,7 @@ The next modules should live under `harness/` instead of being added directly to
 ```text
 harness/
   model_gateway.py       # done
-  context_manager.py     # task packs, summaries, transcript archive
+  context_manager.py     # done
   frontend_generator.py  # natural language -> Vite/React project
   sandbox_runner.py      # isolated install/build/dev commands
   verifier.py            # build, typecheck, Playwright, reports
