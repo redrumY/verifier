@@ -201,7 +201,9 @@ class FrontendGenerator:
             "type": "module",
             "scripts": {
                 "dev": "vite",
+                "typecheck": "tsc --noEmit",
                 "build": "vite build",
+                "test": "npm run typecheck",
                 "preview": "vite preview",
             },
             "dependencies": {

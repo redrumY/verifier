@@ -33,13 +33,22 @@ from .task_planner import (
     TaskPlanner,
     TASK_STATUSES,
 )
+from .verifier import (
+    BrowserResult,
+    CommandResult,
+    VERIFICATION_STATUSES,
+    VerificationReport,
+    Verifier,
+)
 
 __all__ = [
     "AgentSessionState",
     "AgentRole",
     "AgentTask",
+    "BrowserResult",
     "COMPRESSION_SUMMARY_KEYS",
     "COMPRESSION_TRIGGERS",
+    "CommandResult",
     "CompressionRecord",
     "CompressionSummary",
     "ContextManager",
@@ -59,5 +68,8 @@ __all__ = [
     "TaskPlan",
     "TaskPlanner",
     "TokenBudgetExceeded",
+    "VERIFICATION_STATUSES",
+    "VerificationReport",
+    "Verifier",
     "default_role_policies",
 ]

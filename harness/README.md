@@ -105,3 +105,11 @@ into a complete Vite/React/TypeScript project scaffold. It writes `spec.json`,
 `package.json`, `index.html`, `src/App.tsx`, `src/main.tsx`, styles, and Vite/TS
 configuration, then exposes `validate_minimum_delivery()` for deterministic file
 and script checks.
+
+## Verifier
+
+`harness.verifier.Verifier` detects the project type and runs the matching
+verification workflow. Frontend projects run npm install, typecheck, build, test,
+and browser verification. The browser step uses Playwright when available, records
+console errors, and writes screenshots and a JSON verification report under
+`outputs/`.

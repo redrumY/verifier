@@ -57,6 +57,7 @@ from harness.context_manager import ContextManager
 from harness.frontend_generator import FrontendGenerator
 from harness.model_gateway import ModelGateway
 from harness.task_planner import TaskPlanner
+from harness.verifier import Verifier
 
 load_dotenv(override=True)
 if os.getenv("ANTHROPIC_BASE_URL"):
@@ -122,6 +123,7 @@ def call_model(role: str, messages: list, system: str = None,
 # === SECTION: frontend_workflow ===
 FRONTEND_TASK_PLANNER = TaskPlanner(WORKDIR)
 FRONTEND_GENERATOR = FrontendGenerator(WORKDIR)
+PROJECT_VERIFIER = Verifier(WORKDIR)
 
 
 def handle_plan_frontend_tasks(request: str, output_path: str = None) -> str:
@@ -148,6 +150,16 @@ def handle_generate_frontend_project(
     return json.dumps({
         "project": generated.to_dict(),
         "validation": validation,
+    }, indent=2, ensure_ascii=False)
+
+
+def handle_verify_project(project_dir: str, project_type: str = None) -> str:
+    report = PROJECT_VERIFIER.verify(project_dir, project_type=project_type)
+    return json.dumps({
+        **report.summary(),
+        "project_type": report.project_type,
+        "report_path": report.report_path,
+        "commands": [command.to_dict() for command in report.commands],
     }, indent=2, ensure_ascii=False)
 
 
@@ -765,7 +777,8 @@ TEAM = TeammateManager(BUS, TASK_MGR)
 SYSTEM = f"""You are a coding agent at {WORKDIR}. Use tools to solve tasks.
 Prefer task_create/task_update/task_list for multi-step work. Use TodoWrite for short checklists.
 Use task for subagent delegation. Use load_skill for specialized knowledge.
-For frontend generation requests, plan first with plan_frontend_tasks before generating files.
+For frontend generation requests, plan first with plan_frontend_tasks, generate files,
+then verify the project with verify_project.
 Skills: {SKILLS.descriptions()}"""
 
 
@@ -815,6 +828,7 @@ TOOL_HANDLERS = {
     "generate_frontend_project": lambda **kw: handle_generate_frontend_project(
         kw["request"], kw.get("project_dir", "generated/frontend-app"), kw.get("name")
     ),
+    "verify_project": lambda **kw: handle_verify_project(kw["project_dir"], kw.get("project_type")),
 }
 
 TOOLS = [
@@ -868,6 +882,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "output_path": {"type": "string"}}, "required": ["request"]}},
     {"name": "generate_frontend_project", "description": "Generate a complete Vite/React/TypeScript project from a natural language request.",
      "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "project_dir": {"type": "string"}, "name": {"type": "string"}}, "required": ["request"]}},
+    {"name": "verify_project", "description": "Verify a generated project with project-type-specific commands and browser checks.",
+     "input_schema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "project_type": {"type": "string", "enum": ["frontend", "node", "python", "unknown"]}}, "required": ["project_dir"]}},
 ]
 
 

@@ -177,6 +177,44 @@ class BackgroundManagerTests(unittest.TestCase):
             self.assertTrue((project_dir / "index.html").exists())
             self.assertTrue(payload["validation"]["ok"])
 
+    def test_verify_project_tool_returns_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+            project_dir = Path(tmp) / "app"
+            project_dir.mkdir()
+            (project_dir / "package.json").write_text(json.dumps({
+                "scripts": {"build": "vite build", "test": "npm run typecheck"},
+                "dependencies": {"vite": "^6.0.0"},
+            }))
+
+            class FakeVerifier:
+                def verify(self, project_dir, project_type=None):
+                    command = types.SimpleNamespace(to_dict=lambda: {
+                        "name": "build",
+                        "status": "passed",
+                    })
+                    return types.SimpleNamespace(
+                        project_type="frontend",
+                        report_path="outputs/verification-report.json",
+                        commands=[command],
+                        summary=lambda: {
+                            "build": "passed",
+                            "tests": "passed",
+                            "browser": "passed",
+                            "console_errors": [],
+                            "screenshot": "outputs/screenshot.png",
+                        },
+                    )
+
+            module.PROJECT_VERIFIER = FakeVerifier()
+            payload = json.loads(module.handle_verify_project("app"))
+
+            self.assertEqual(payload["build"], "passed")
+            self.assertEqual(payload["tests"], "passed")
+            self.assertEqual(payload["browser"], "passed")
+            self.assertEqual(payload["console_errors"], [])
+            self.assertEqual(payload["screenshot"], "outputs/screenshot.png")
+
 
 if __name__ == "__main__":
     unittest.main()

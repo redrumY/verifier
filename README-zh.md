@@ -13,6 +13,7 @@ verification-first coding agent harness。
 - [第 3 步：上下文压缩设计](docs/context-compression-zh.md)
 - [第 4 步：任务拆分设计](docs/task-planning-zh.md)
 - [第 5 步：生成完整前端工程设计](docs/frontend-generation-zh.md)
+- [第 6 步：验证代码质量设计](docs/verifier-zh.md)
 
 ```text
 用户需求
@@ -133,8 +134,8 @@ harness/
   context_manager.py     # 已完成
   task_planner.py        # 已完成
   frontend_generator.py  # 已完成
+  verifier.py            # 已完成
   sandbox_runner.py      # 独立目录、命令白名单、timeout
-  verifier.py            # build/typecheck/Playwright/report
 ```
 
 `agents/s_full.py` 保持为主控入口；复杂运行时能力逐步拆到 `harness/`。

@@ -33,7 +33,9 @@ def test_generated_package_has_install_build_and_dev_scripts(tmp_path: Path):
     package_json = json.loads((tmp_path / "app" / "package.json").read_text())
 
     assert package_json["scripts"]["dev"] == "vite"
+    assert package_json["scripts"]["typecheck"] == "tsc --noEmit"
     assert package_json["scripts"]["build"] == "vite build"
+    assert package_json["scripts"]["test"] == "npm run typecheck"
     assert "react" in package_json["dependencies"]
     assert "vite" in package_json["dependencies"]
     assert "@types/react" in package_json["devDependencies"]
