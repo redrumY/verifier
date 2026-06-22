@@ -11,6 +11,8 @@ verification-first coding agent harness。
 
 - [ModelGateway + ContextManager 数据流](docs/model-gateway-context-flow-zh.md)
 - [第 3 步：上下文压缩设计](docs/context-compression-zh.md)
+- [第 4 步：任务拆分设计](docs/task-planning-zh.md)
+- [第 5 步：生成完整前端工程设计](docs/frontend-generation-zh.md)
 
 ```text
 用户需求
@@ -129,7 +131,8 @@ API 分配由 ModelGateway 做
 harness/
   model_gateway.py       # 已完成
   context_manager.py     # 已完成
-  frontend_generator.py  # 自然语言 -> Vite/React 工程
+  task_planner.py        # 已完成
+  frontend_generator.py  # 已完成
   sandbox_runner.py      # 独立目录、命令白名单、timeout
   verifier.py            # build/typecheck/Playwright/report
 ```

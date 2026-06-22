@@ -148,6 +148,35 @@ class BackgroundManagerTests(unittest.TestCase):
             self.assertIn('"goal": "用户要生成一个可运行 React 网页"', compacted[0]["content"])
             self.assertIn("phase_transition", compacted[0]["content"])
 
+    def test_frontend_task_planning_tool_writes_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+
+            output = module.handle_plan_frontend_tasks("生成一个可运行 React 网页")
+            payload = json.loads(output)
+
+            self.assertTrue(Path(payload["plan_path"]).exists())
+            self.assertEqual(payload["plan"]["tasks"][0]["id"], "task_001")
+            self.assertEqual(payload["plan"]["tasks"][0]["owner"], "planner")
+            self.assertEqual(payload["ready_tasks"][0]["id"], "task_001")
+
+    def test_frontend_generation_tool_creates_minimum_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+
+            output = module.handle_generate_frontend_project(
+                "生成一个有数据看板的 React 页面",
+                project_dir="generated/app",
+            )
+            payload = json.loads(output)
+            project_dir = Path(payload["project"]["project_dir"])
+
+            self.assertTrue((project_dir / "package.json").exists())
+            self.assertTrue((project_dir / "src/App.tsx").exists())
+            self.assertTrue((project_dir / "src/main.tsx").exists())
+            self.assertTrue((project_dir / "index.html").exists())
+            self.assertTrue(payload["validation"]["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

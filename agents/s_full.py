@@ -54,7 +54,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from harness.context_manager import ContextManager
+from harness.frontend_generator import FrontendGenerator
 from harness.model_gateway import ModelGateway
+from harness.task_planner import TaskPlanner
 
 load_dotenv(override=True)
 if os.getenv("ANTHROPIC_BASE_URL"):
@@ -70,6 +72,7 @@ INBOX_DIR = TEAM_DIR / "inbox"
 TASKS_DIR = WORKDIR / ".tasks"
 SKILLS_DIR = WORKDIR / "skills"
 TRANSCRIPT_DIR = WORKDIR / ".transcripts"
+GENERATED_DIR = WORKDIR / "generated"
 TOKEN_THRESHOLD = 100000
 POLL_INTERVAL = 5
 IDLE_TIMEOUT = 60
@@ -114,6 +117,38 @@ def call_model(role: str, messages: list, system: str = None,
         tools=tools,
         max_tokens=max_tokens,
     ).raw
+
+
+# === SECTION: frontend_workflow ===
+FRONTEND_TASK_PLANNER = TaskPlanner(WORKDIR)
+FRONTEND_GENERATOR = FrontendGenerator(WORKDIR)
+
+
+def handle_plan_frontend_tasks(request: str, output_path: str = None) -> str:
+    plan = FRONTEND_TASK_PLANNER.create_frontend_plan(request)
+    path = FRONTEND_TASK_PLANNER.save_plan(plan, output_path)
+    return json.dumps({
+        "plan_path": str(path),
+        "plan": plan.to_dict(),
+        "ready_tasks": [task.to_dict() for task in plan.ready_tasks()],
+    }, indent=2, ensure_ascii=False)
+
+
+def handle_generate_frontend_project(
+    request: str,
+    project_dir: str = "generated/frontend-app",
+    name: str = None,
+) -> str:
+    generated = FRONTEND_GENERATOR.generate_from_natural_language(
+        request=request,
+        project_dir=project_dir,
+        name=name,
+    )
+    validation = FRONTEND_GENERATOR.validate_minimum_delivery(project_dir)
+    return json.dumps({
+        "project": generated.to_dict(),
+        "validation": validation,
+    }, indent=2, ensure_ascii=False)
 
 
 # === SECTION: base_tools ===
@@ -730,6 +765,7 @@ TEAM = TeammateManager(BUS, TASK_MGR)
 SYSTEM = f"""You are a coding agent at {WORKDIR}. Use tools to solve tasks.
 Prefer task_create/task_update/task_list for multi-step work. Use TodoWrite for short checklists.
 Use task for subagent delegation. Use load_skill for specialized knowledge.
+For frontend generation requests, plan first with plan_frontend_tasks before generating files.
 Skills: {SKILLS.descriptions()}"""
 
 
@@ -775,6 +811,10 @@ TOOL_HANDLERS = {
     "plan_approval":    lambda **kw: handle_plan_review(kw["request_id"], kw["approve"], kw.get("feedback", "")),
     "idle":             lambda **kw: "Lead does not idle.",
     "claim_task":       lambda **kw: TASK_MGR.claim(kw["task_id"], "lead"),
+    "plan_frontend_tasks": lambda **kw: handle_plan_frontend_tasks(kw["request"], kw.get("output_path")),
+    "generate_frontend_project": lambda **kw: handle_generate_frontend_project(
+        kw["request"], kw.get("project_dir", "generated/frontend-app"), kw.get("name")
+    ),
 }
 
 TOOLS = [
@@ -824,6 +864,10 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "claim_task", "description": "Claim a task from the board.",
      "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}}, "required": ["task_id"]}},
+    {"name": "plan_frontend_tasks", "description": "Create the standard six-step frontend generation task plan before writing code.",
+     "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "output_path": {"type": "string"}}, "required": ["request"]}},
+    {"name": "generate_frontend_project", "description": "Generate a complete Vite/React/TypeScript project from a natural language request.",
+     "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "project_dir": {"type": "string"}, "name": {"type": "string"}}, "required": ["request"]}},
 ]
 
 

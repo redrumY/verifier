@@ -80,3 +80,28 @@ summary = contexts.complete_session(
 Only the `SessionSummary` is attached back to the parent. The child transcript
 stays archived under `.context/transcripts/`, which keeps the parent prompt
 small while preserving auditability.
+
+## TaskPlanner
+
+`harness.task_planner.TaskPlanner` creates the standard frontend-generation task
+graph. The lead agent can plan before writing code, while each task records its
+owner, status, dependencies, context references, acceptance criteria, and result.
+
+The default workflow is:
+
+```text
+task_001 spec generation
+  -> task_002 Vite project generation
+  -> task_003 install/build
+  -> task_004 browser verification
+  -> task_005 repair from logs
+  -> task_006 final report
+```
+
+## FrontendGenerator
+
+`harness.frontend_generator.FrontendGenerator` turns a natural language request
+into a complete Vite/React/TypeScript project scaffold. It writes `spec.json`,
+`package.json`, `index.html`, `src/App.tsx`, `src/main.tsx`, styles, and Vite/TS
+configuration, then exposes `validate_minimum_delivery()` for deterministic file
+and script checks.
