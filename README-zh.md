@@ -14,6 +14,8 @@ verification-first coding agent harness。
 - [第 4 步：任务拆分设计](docs/task-planning-zh.md)
 - [第 5 步：生成完整前端工程设计](docs/frontend-generation-zh.md)
 - [第 6 步：验证代码质量设计](docs/verifier-zh.md)
+- [第 7 步：Docker Sandbox Runner 设计](docs/docker-sandbox-runner-zh.md)
+- [第 8 步：受控 Agent Workflow 状态机设计](docs/agent-workflow-state-machine-zh.md)
 
 ```text
 用户需求
@@ -135,7 +137,8 @@ harness/
   task_planner.py        # 已完成
   frontend_generator.py  # 已完成
   verifier.py            # 已完成
-  sandbox_runner.py      # 独立目录、命令白名单、timeout
+  sandbox_runner.py      # 已完成
+  workflow_state.py      # 下一步：受控状态机
 ```
 
 `agents/s_full.py` 保持为主控入口；复杂运行时能力逐步拆到 `harness/`。

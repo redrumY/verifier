@@ -56,6 +56,7 @@ if str(REPO_ROOT) not in sys.path:
 from harness.context_manager import ContextManager
 from harness.frontend_generator import FrontendGenerator
 from harness.model_gateway import ModelGateway
+from harness.sandbox_runner import DockerSandboxRunner, frontend_ui_component_profile
 from harness.task_planner import TaskPlanner
 from harness.verifier import Verifier
 
@@ -124,6 +125,7 @@ def call_model(role: str, messages: list, system: str = None,
 FRONTEND_TASK_PLANNER = TaskPlanner(WORKDIR)
 FRONTEND_GENERATOR = FrontendGenerator(WORKDIR)
 PROJECT_VERIFIER = Verifier(WORKDIR)
+SANDBOX_RUNNER = DockerSandboxRunner(WORKDIR)
 
 
 def handle_plan_frontend_tasks(request: str, output_path: str = None) -> str:
@@ -161,6 +163,25 @@ def handle_verify_project(project_dir: str, project_type: str = None) -> str:
         "report_path": report.report_path,
         "commands": [command.to_dict() for command in report.commands],
     }, indent=2, ensure_ascii=False)
+
+
+def handle_prepare_docker_sandbox(
+    project_dir: str,
+    patch_text: str = None,
+    run_id: str = None,
+) -> str:
+    sandbox_run = SANDBOX_RUNNER.prepare_run(
+        project_dir,
+        profile=frontend_ui_component_profile(),
+        patch_text=patch_text,
+        run_id=run_id,
+    )
+    return json.dumps(sandbox_run.to_dict(), indent=2, ensure_ascii=False)
+
+
+def handle_run_docker_sandbox(run_dir: str) -> str:
+    result = SANDBOX_RUNNER.run(run_dir)
+    return json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
 
 
 # === SECTION: base_tools ===
@@ -779,6 +800,8 @@ Prefer task_create/task_update/task_list for multi-step work. Use TodoWrite for 
 Use task for subagent delegation. Use load_skill for specialized knowledge.
 For frontend generation requests, plan first with plan_frontend_tasks, generate files,
 then verify the project with verify_project.
+For existing frontend UI changes, prepare a Docker sandbox before running verification
+so the original project is not mutated by install/build/browser checks.
 Skills: {SKILLS.descriptions()}"""
 
 
@@ -829,6 +852,10 @@ TOOL_HANDLERS = {
         kw["request"], kw.get("project_dir", "generated/frontend-app"), kw.get("name")
     ),
     "verify_project": lambda **kw: handle_verify_project(kw["project_dir"], kw.get("project_type")),
+    "prepare_docker_sandbox": lambda **kw: handle_prepare_docker_sandbox(
+        kw["project_dir"], kw.get("patch_text"), kw.get("run_id")
+    ),
+    "run_docker_sandbox": lambda **kw: handle_run_docker_sandbox(kw["run_dir"]),
 }
 
 TOOLS = [
@@ -884,6 +911,10 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "project_dir": {"type": "string"}, "name": {"type": "string"}}, "required": ["request"]}},
     {"name": "verify_project", "description": "Verify a generated project with project-type-specific commands and browser checks.",
      "input_schema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "project_type": {"type": "string", "enum": ["frontend", "node", "python", "unknown"]}}, "required": ["project_dir"]}},
+    {"name": "prepare_docker_sandbox", "description": "Create an isolated Docker sandbox run directory for frontend UI verification without mutating the source project.",
+     "input_schema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "patch_text": {"type": "string"}, "run_id": {"type": "string"}}, "required": ["project_dir"]}},
+    {"name": "run_docker_sandbox", "description": "Run a prepared Docker sandbox and return the sandbox execution result.",
+     "input_schema": {"type": "object", "properties": {"run_dir": {"type": "string"}}, "required": ["run_dir"]}},
 ]
 
 

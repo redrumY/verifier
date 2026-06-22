@@ -198,6 +198,7 @@ cython_debug/
 .logs/
 .mailboxes/
 outputs/
+.sandbox/
 .worktrees/
 .scheduled_tasks.json
 

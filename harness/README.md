@@ -113,3 +113,12 @@ verification workflow. Frontend projects run npm install, typecheck, build, test
 and browser verification. The browser step uses Playwright when available, records
 console errors, and writes screenshots and a JSON verification report under
 `outputs/`.
+
+## DockerSandboxRunner
+
+`harness.sandbox_runner.DockerSandboxRunner` creates Docker-backed local-CI runs
+for generated or patched frontend projects. It copies the source project into
+`.sandbox/runs/<id>/project`, writes a `TestProfile`, Dockerfile, compose file,
+and runner scripts, then can execute `docker compose run --rm verifier` to produce
+logs, screenshots, and `verification-report.json` without mutating the original
+project directory.

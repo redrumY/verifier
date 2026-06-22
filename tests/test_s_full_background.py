@@ -215,6 +215,31 @@ class BackgroundManagerTests(unittest.TestCase):
             self.assertEqual(payload["console_errors"], [])
             self.assertEqual(payload["screenshot"], "outputs/screenshot.png")
 
+    def test_prepare_and_run_docker_sandbox_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+            module.FRONTEND_GENERATOR.generate_from_natural_language("生成 React 页面", "app")
+
+            prepared = json.loads(module.handle_prepare_docker_sandbox("app", run_id="run_tool"))
+            self.assertEqual(prepared["run_id"], "run_tool")
+            self.assertTrue(Path(prepared["dockerfile_path"]).exists())
+            self.assertTrue(Path(prepared["compose_path"]).exists())
+
+            class FakeSandboxRunner:
+                def run(self, run_dir):
+                    return types.SimpleNamespace(to_dict=lambda: {
+                        "run_id": "run_tool",
+                        "status": "passed",
+                        "run_dir": str(run_dir),
+                        "report_path": "outputs/verification-report.json",
+                    })
+
+            module.SANDBOX_RUNNER = FakeSandboxRunner()
+            result = json.loads(module.handle_run_docker_sandbox(prepared["run_dir"]))
+
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["run_id"], "run_tool")
+
 
 if __name__ == "__main__":
     unittest.main()
