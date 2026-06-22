@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
 from harness.context_manager import ContextManager
@@ -102,3 +103,14 @@ def test_tool_result_content_is_trimmed(tmp_path: Path):
 
     assert content.startswith("x" * 10)
     assert "truncated 20 chars" in content
+
+
+def test_model_content_blocks_are_serialized(tmp_path: Path):
+    manager = ContextManager(tmp_path)
+    session = manager.create_session("coder", "Store provider response")
+    block = types.SimpleNamespace(type="text", text="hello")
+
+    manager.append_message(session.session_id, "assistant", [block])
+
+    content = manager.get_messages(session.session_id)[0]["content"]
+    assert content == [{"type": "text", "text": "hello"}]

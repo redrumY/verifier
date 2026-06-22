@@ -53,6 +53,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from harness.context_manager import ContextManager
 from harness.model_gateway import ModelGateway
 
 load_dotenv(override=True)
@@ -61,6 +62,8 @@ if os.getenv("ANTHROPIC_BASE_URL"):
 
 WORKDIR = Path.cwd()
 GATEWAY = ModelGateway.from_env(call_log_path=WORKDIR / ".logs" / "model-calls.jsonl")
+CONTEXTS = ContextManager(WORKDIR)
+LEAD_SESSION_ID = None
 
 TEAM_DIR = WORKDIR / ".team"
 INBOX_DIR = TEAM_DIR / "inbox"
@@ -76,6 +79,18 @@ VALID_MSG_TYPES = {"message", "broadcast", "shutdown_request",
 
 
 # === SECTION: model_gateway ===
+def ensure_lead_session(objective: str = "interactive coding-agent session") -> str:
+    global LEAD_SESSION_ID
+    if LEAD_SESSION_ID is None:
+        LEAD_SESSION_ID = CONTEXTS.create_session("planner", objective).session_id
+    return LEAD_SESSION_ID
+
+
+def record_context_message(session_id: str | None, role: str, content, metadata: dict | None = None):
+    if session_id:
+        CONTEXTS.append_message(session_id, role, content, metadata=metadata)
+
+
 def gateway_role_for_teammate(role: str) -> str:
     normalized = (role or "").lower()
     if any(word in normalized for word in ("test", "qa", "verify")):
@@ -188,7 +203,8 @@ class TodoManager:
 
 
 # === SECTION: subagent (s04) ===
-def run_subagent(prompt: str, agent_type: str = "Explore") -> str:
+def run_subagent(prompt: str, agent_type: str = "Explore",
+                 parent_session_id: str | None = None) -> str:
     sub_tools = [
         {"name": "bash", "description": "Run command.",
          "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
@@ -208,12 +224,23 @@ def run_subagent(prompt: str, agent_type: str = "Explore") -> str:
         "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
         "edit_file": lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
     }
-    sub_msgs = [{"role": "user", "content": prompt}]
+    gateway_role = "planner" if agent_type == "Explore" else "coder"
+    task_pack = CONTEXTS.build_task_pack(
+        role=gateway_role,
+        objective=prompt,
+        parent_session_id=parent_session_id,
+        acceptance_criteria=["Return a concise summary of findings and changes."],
+        constraints=["Use only the tools provided to this subagent."],
+        metadata={"agent_type": agent_type},
+    )
+    child_session = CONTEXTS.create_child_session(task_pack)
+    sub_msgs = CONTEXTS.get_messages(child_session.session_id)
     resp = None
+    summary_text = "(subagent failed)"
     for _ in range(30):
-        role = "planner" if agent_type == "Explore" else "coder"
-        resp = call_model(role, sub_msgs, tools=sub_tools, max_tokens=8000)
+        resp = call_model(gateway_role, sub_msgs, tools=sub_tools, max_tokens=8000)
         sub_msgs.append({"role": "assistant", "content": resp.content})
+        record_context_message(child_session.session_id, "assistant", resp.content)
         if resp.stop_reason != "tool_use":
             break
         results = []
@@ -222,9 +249,15 @@ def run_subagent(prompt: str, agent_type: str = "Explore") -> str:
                 h = sub_handlers.get(b.name, lambda **kw: "Unknown tool")
                 results.append({"type": "tool_result", "tool_use_id": b.id, "content": str(h(**b.input))[:50000]})
         sub_msgs.append({"role": "user", "content": results})
+        record_context_message(child_session.session_id, "user", results)
     if resp:
-        return "".join(b.text for b in resp.content if hasattr(b, "text")) or "(no summary)"
-    return "(subagent failed)"
+        summary_text = "".join(b.text for b in resp.content if hasattr(b, "text")) or "(no summary)"
+    CONTEXTS.complete_session(
+        child_session.session_id,
+        result=summary_text,
+        attach_to_parent=parent_session_id is not None,
+    )
+    return summary_text
 
 
 # === SECTION: skills (s05) ===
@@ -272,7 +305,7 @@ def microcompact(messages: list):
         if isinstance(part.get("content"), str) and len(part["content"]) > 100:
             part["content"] = "[cleared]"
 
-def auto_compact(messages: list) -> list:
+def auto_compact(messages: list, session_id: str | None = None) -> list:
     TRANSCRIPT_DIR.mkdir(exist_ok=True)
     path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
     with open(path, "w") as f:
@@ -285,6 +318,8 @@ def auto_compact(messages: list) -> list:
         max_tokens=2000,
     )
     summary = resp.content[0].text
+    if session_id:
+        CONTEXTS.compact_session(session_id, summary)
     return [
         {"role": "user", "content": f"[Compressed. Transcript: {path}]\n{summary}"},
     ]
@@ -474,7 +509,16 @@ class TeammateManager:
         team_name = self.config["team_name"]
         sys_prompt = (f"You are '{name}', role: {role}, team: {team_name}, at {WORKDIR}. "
                       f"Use idle when done with current work. You may auto-claim tasks.")
-        messages = [{"role": "user", "content": prompt}]
+        task_pack = CONTEXTS.build_task_pack(
+            role=gateway_role_for_teammate(role),
+            objective=prompt,
+            parent_session_id=ensure_lead_session(),
+            acceptance_criteria=["Report progress through messages or idle when done."],
+            constraints=["Use the team inbox for coordination with other agents."],
+            metadata={"teammate": name, "declared_role": role},
+        )
+        teammate_session = CONTEXTS.create_child_session(task_pack)
+        messages = CONTEXTS.get_messages(teammate_session.session_id)
         tools = [
             {"name": "bash", "description": "Run command.", "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
             {"name": "read_file", "description": "Read file.", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
@@ -490,9 +534,15 @@ class TeammateManager:
                 inbox = self.bus.read_inbox(name)
                 for msg in inbox:
                     if msg.get("type") == "shutdown_request":
+                        CONTEXTS.complete_session(
+                            teammate_session.session_id,
+                            result="shutdown requested",
+                            attach_to_parent=True,
+                        )
                         self._set_status(name, "shutdown")
                         return
                     messages.append({"role": "user", "content": json.dumps(msg)})
+                    record_context_message(teammate_session.session_id, "user", msg, {"source": "inbox"})
                 try:
                     response = call_model(
                         gateway_role_for_teammate(role),
@@ -501,9 +551,16 @@ class TeammateManager:
                         tools=tools,
                         max_tokens=8000)
                 except Exception:
+                    CONTEXTS.complete_session(
+                        teammate_session.session_id,
+                        result="model call failed",
+                        open_issues=["teammate stopped after model call exception"],
+                        attach_to_parent=True,
+                    )
                     self._set_status(name, "shutdown")
                     return
                 messages.append({"role": "assistant", "content": response.content})
+                record_context_message(teammate_session.session_id, "assistant", response.content)
                 if response.stop_reason != "tool_use":
                     break
                 results = []
@@ -526,6 +583,7 @@ class TeammateManager:
                         print(f"  [{name}] {block.name}: {str(output)[:120]}")
                         results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
                 messages.append({"role": "user", "content": results})
+                record_context_message(teammate_session.session_id, "user", results, {"source": "tool_results"})
                 if idle_requested:
                     break
             # -- IDLE PHASE: poll for messages and unclaimed tasks --
@@ -537,9 +595,15 @@ class TeammateManager:
                 if inbox:
                     for msg in inbox:
                         if msg.get("type") == "shutdown_request":
+                            CONTEXTS.complete_session(
+                                teammate_session.session_id,
+                                result="shutdown requested",
+                                attach_to_parent=True,
+                            )
                             self._set_status(name, "shutdown")
                             return
                         messages.append({"role": "user", "content": json.dumps(msg)})
+                        record_context_message(teammate_session.session_id, "user", msg, {"source": "idle_inbox"})
                     resume = True
                     break
                 unclaimed = []
@@ -558,9 +622,19 @@ class TeammateManager:
                     messages.append({"role": "user", "content":
                         f"<auto-claimed>Task #{task['id']}: {task['subject']}\n{task.get('description', '')}</auto-claimed>"})
                     messages.append({"role": "assistant", "content": f"Claimed task #{task['id']}. Working on it."})
+                    record_context_message(
+                        teammate_session.session_id,
+                        "user",
+                        {"type": "auto_claimed", "task": task},
+                    )
                     resume = True
                     break
             if not resume:
+                CONTEXTS.complete_session(
+                    teammate_session.session_id,
+                    result="idle timeout; teammate stopped",
+                    attach_to_parent=True,
+                )
                 self._set_status(name, "shutdown")
                 return
             self._set_status(name, "working")
@@ -686,23 +760,28 @@ TOOLS = [
 
 
 # === SECTION: agent_loop ===
-def agent_loop(messages: list):
+def agent_loop(messages: list, session_id: str | None = None):
+    session_id = session_id or ensure_lead_session()
     rounds_without_todo = 0
     while True:
         # s06: compression pipeline
         microcompact(messages)
         if estimate_tokens(messages) > TOKEN_THRESHOLD:
             print("[auto-compact triggered]")
-            messages[:] = auto_compact(messages)
+            messages[:] = auto_compact(messages, session_id=session_id)
         # s08: drain background notifications
         notifs = BG.drain()
         if notifs:
             txt = "\n".join(f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs)
-            messages.append({"role": "user", "content": f"<background-results>\n{txt}\n</background-results>"})
+            bg_message = {"role": "user", "content": f"<background-results>\n{txt}\n</background-results>"}
+            messages.append(bg_message)
+            record_context_message(session_id, bg_message["role"], bg_message["content"], {"source": "background"})
         # s10: check lead inbox
         inbox = BUS.read_inbox("lead")
         if inbox:
-            messages.append({"role": "user", "content": f"<inbox>{json.dumps(inbox, indent=2)}</inbox>"})
+            inbox_message = {"role": "user", "content": f"<inbox>{json.dumps(inbox, indent=2)}</inbox>"}
+            messages.append(inbox_message)
+            record_context_message(session_id, inbox_message["role"], inbox_message["content"], {"source": "inbox"})
         # LLM call
         response = call_model(
             "planner",
@@ -712,6 +791,7 @@ def agent_loop(messages: list):
             max_tokens=8000,
         )
         messages.append({"role": "assistant", "content": response.content})
+        record_context_message(session_id, "assistant", response.content)
         if response.stop_reason != "tool_use":
             return
         # Tool execution
@@ -724,7 +804,14 @@ def agent_loop(messages: list):
                     manual_compress = True
                 handler = TOOL_HANDLERS.get(block.name)
                 try:
-                    output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
+                    if block.name == "task":
+                        output = run_subagent(
+                            block.input["prompt"],
+                            block.input.get("agent_type", "Explore"),
+                            parent_session_id=session_id,
+                        )
+                    else:
+                        output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
                 except Exception as e:
                     output = f"Error: {e}"
                 print(f"> {block.name}:")
@@ -737,16 +824,18 @@ def agent_loop(messages: list):
         if TODO.has_open_items() and rounds_without_todo >= 3:
             results.append({"type": "text", "text": "<reminder>Update your todos.</reminder>"})
         messages.append({"role": "user", "content": results})
+        record_context_message(session_id, "user", results, {"source": "tool_results"})
         # s06: manual compress
         if manual_compress:
             print("[manual compact]")
-            messages[:] = auto_compact(messages)
+            messages[:] = auto_compact(messages, session_id=session_id)
             return
 
 
 # === SECTION: repl ===
 if __name__ == "__main__":
     history = []
+    lead_session_id = ensure_lead_session()
     while True:
         try:
             query = input("\033[36ms_full >> \033[0m")
@@ -757,7 +846,7 @@ if __name__ == "__main__":
         if query.strip() == "/compact":
             if history:
                 print("[manual compact via /compact]")
-                history[:] = auto_compact(history)
+                history[:] = auto_compact(history, session_id=lead_session_id)
             continue
         if query.strip() == "/tasks":
             print(TASK_MGR.list_all())
@@ -769,7 +858,8 @@ if __name__ == "__main__":
             print(json.dumps(BUS.read_inbox("lead"), indent=2))
             continue
         history.append({"role": "user", "content": query})
-        agent_loop(history)
+        record_context_message(lead_session_id, "user", query)
+        agent_loop(history, session_id=lead_session_id)
         response_content = history[-1]["content"]
         if isinstance(response_content, list):
             for block in response_content:

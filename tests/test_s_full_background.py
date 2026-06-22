@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -98,6 +99,27 @@ class BackgroundManagerTests(unittest.TestCase):
             self.assertEqual(module.gateway_role_for_teammate("QA tester"), "tester")
             self.assertEqual(module.gateway_role_for_teammate("security reviewer"), "reviewer")
             self.assertEqual(module.gateway_role_for_teammate("frontend engineer"), "coder")
+
+    def test_run_subagent_records_summary_in_parent_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+            parent = module.CONTEXTS.create_session("planner", "parent task")
+
+            module.call_model = lambda *args, **kwargs: types.SimpleNamespace(
+                content=[types.SimpleNamespace(type="text", text="subagent done")],
+                stop_reason="end_turn",
+            )
+
+            result = module.run_subagent(
+                "inspect frontend files",
+                parent_session_id=parent.session_id,
+            )
+
+            parent_messages = module.CONTEXTS.get_messages(parent.session_id)
+            serialized = json.dumps(parent_messages)
+            self.assertEqual(result, "subagent done")
+            self.assertIn("agent_summary", serialized)
+            self.assertIn("subagent done", serialized)
 
 
 if __name__ == "__main__":

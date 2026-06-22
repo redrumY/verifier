@@ -157,7 +157,7 @@ class ContextManager:
         session = self.load_session(session_id)
         message = {
             "role": role,
-            "content": self._trim_content(content),
+            "content": self._jsonable(self._trim_content(content)),
             "metadata": metadata or {},
             "ts": _now(),
         }
@@ -306,6 +306,21 @@ class ContextManager:
                     )
             return copied
         return content
+
+    def _jsonable(self, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, list):
+            return [self._jsonable(item) for item in value]
+        if isinstance(value, tuple):
+            return [self._jsonable(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._jsonable(item) for key, item in value.items()}
+        if hasattr(value, "model_dump"):
+            return self._jsonable(value.model_dump())
+        if hasattr(value, "__dict__"):
+            return self._jsonable(vars(value))
+        return str(value)
 
     def _deterministic_summary(self, session: AgentSessionState) -> str:
         return (
