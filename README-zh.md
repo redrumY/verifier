@@ -12,6 +12,7 @@ verification-first coding agent harness。
 - [ModelGateway + ContextManager 数据流](docs/model-gateway-context-flow-zh.md)
 - [第 3 步：上下文压缩设计](docs/context-compression-zh.md)
 - [第 4 步：任务拆分设计](docs/task-planning-zh.md)
+- [第 4.5 步：动态任务规划设计](docs/dynamic-task-planning-zh.md)
 - [第 5 步：生成完整前端工程设计](docs/frontend-generation-zh.md)
 - [第 6 步：验证代码质量设计](docs/verifier-zh.md)
 - [第 7 步：Docker Sandbox Runner 设计](docs/docker-sandbox-runner-zh.md)

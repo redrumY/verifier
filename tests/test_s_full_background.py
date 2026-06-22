@@ -156,6 +156,7 @@ class BackgroundManagerTests(unittest.TestCase):
             payload = json.loads(output)
 
             self.assertTrue(Path(payload["plan_path"]).exists())
+            self.assertEqual(payload["planner_mode"], "dynamic")
             self.assertEqual(payload["plan"]["tasks"][0]["id"], "task_001")
             self.assertEqual(payload["plan"]["tasks"][0]["owner"], "planner")
             self.assertEqual(payload["ready_tasks"][0]["id"], "task_001")

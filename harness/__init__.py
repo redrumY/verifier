@@ -10,6 +10,7 @@ from .context_manager import (
     SessionSummary,
     TaskPack,
 )
+from .dynamic_task_planner import DynamicTaskPlanner, TaskTemplate
 from .frontend_generator import (
     FrontendGenerator,
     FrontendProjectSpec,
@@ -34,6 +35,8 @@ from .model_gateway import (
     TokenBudgetExceeded,
     default_role_policies,
 )
+from .repo_scanner import PackageFacts, RepoFacts, RepoScanner
+from .requirement_analyzer import RequirementAnalyzer, RequirementSpec
 from .sandbox_runner import (
     BrowserProfile,
     BrowserViewport,
@@ -75,6 +78,7 @@ __all__ = [
     "ContextManager",
     "DEFAULT_ROLE_POLICIES",
     "DockerSandboxRunner",
+    "DynamicTaskPlanner",
     "FAILURE_ERROR_TYPES",
     "FailureClassifier",
     "FailureDigest",
@@ -87,13 +91,19 @@ __all__ = [
     "ModelGatewayError",
     "ModelGatewayResponse",
     "ModelPolicy",
+    "PackageFacts",
     "REQUIRED_FRONTEND_FILES",
+    "RepoFacts",
+    "RepoScanner",
+    "RequirementAnalyzer",
+    "RequirementSpec",
     "SANDBOX_STATUSES",
     "SessionSummary",
     "SandboxExecutionResult",
     "SandboxRun",
     "TASK_STATUSES",
     "TaskPack",
+    "TaskTemplate",
     "TestCommand",
     "TestProfile",
     "TaskPlan",

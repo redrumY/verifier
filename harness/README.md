@@ -83,11 +83,16 @@ small while preserving auditability.
 
 ## TaskPlanner
 
-`harness.task_planner.TaskPlanner` creates the standard frontend-generation task
-graph. The lead agent can plan before writing code, while each task records its
-owner, status, dependencies, context references, acceptance criteria, and result.
+`harness.task_planner.TaskPlanner` creates dependency-aware task graphs before
+the lead agent writes code. `create_dynamic_plan()` scans repo facts, analyzes
+the user request, and selects a workflow for frontend generation, UI changes,
+UI/API integration, bug fixes, tests, or clarification. `create_frontend_plan()`
+is kept as the old standard frontend-generation template fallback.
 
-The default workflow is:
+Each task records its owner, status, dependencies, context references, acceptance
+criteria, and result.
+
+The template fallback workflow is:
 
 ```text
 task_001 spec generation
@@ -96,6 +101,16 @@ task_001 spec generation
   -> task_004 browser verification
   -> task_005 repair from logs
   -> task_006 final report
+```
+
+For an existing full-stack UI/API task, the dynamic planner can instead emit:
+
+```text
+repo inspection
+  -> API contract planning
+  -> scoped code edit
+  -> sandbox verification
+  -> diff and risk review
 ```
 
 ## FrontendGenerator

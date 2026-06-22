@@ -23,6 +23,7 @@ from harness.sandbox_runner import (
     TestCommand,
     TestProfile,
 )
+from harness.task_planner import AgentTask, TaskPlan, TaskPlanner
 from harness.verifier import Verifier
 
 
@@ -68,46 +69,37 @@ def summarize_project(project_dir: Path, frontend_dir: Path) -> dict[str, Any]:
     }
 
 
-def build_task_pack(project_summary: dict[str, Any], task: str) -> TaskPack:
-    relevant_files = [
-        "frontend/src/pages/Dashboard.jsx",
-        "frontend/src/features/goals/goalSlice.js",
-        "frontend/src/features/goals/goalService.js",
-        "frontend/src/components/GoalItem.jsx",
-        "frontend/src/index.css",
-        "backend/routes/goalRoutes.js",
-        "backend/controllers/goalController.js",
-    ]
-    acceptance = [
-        "Dashboard renders a summary section above the goal list.",
-        "Summary uses the existing goals array returned from /api/goals.",
-        "No backend route changes are required unless the existing contract is insufficient.",
-        "Frontend build passes.",
-        "Browser verification can open the dashboard route with mock auth/API data.",
-        "Existing create/delete goal behavior is not broken.",
-    ]
-    constraints = [
-        "Do not run install/build directly in the source project; use sandbox first.",
-        "Do not require a real MongoDB instance for UI verification; prefer mock API data.",
-        "Do not put secrets or JWT values into prompt, Git, or logs.",
-        "If real backend smoke test is unavailable, record it as an open issue instead of changing UI blindly.",
+def select_child_task(plan: TaskPlan) -> AgentTask:
+    for task in plan.tasks:
+        if task.owner == "coder":
+            return task
+    return plan.tasks[0]
+
+
+def build_task_pack(project_summary: dict[str, Any], plan: TaskPlan) -> TaskPack:
+    child_task = select_child_task(plan)
+    metadata = plan.metadata
+    constraints = metadata.get("constraints", [])
+    context_refs = [
+        "dynamic_task_plan",
+        "repo_facts",
+        *child_task.context_refs[:6],
     ]
     return TaskPack(
         task_id=f"probe_task_{int(time.time())}",
-        role="coder",
-        objective=task,
-        acceptance_criteria=acceptance,
-        relevant_files=relevant_files,
-        context_refs=[
-            "root package.json",
-            "frontend package.json",
-            "api proxy",
-            "goal redux slice",
-        ],
+        role=child_task.owner,
+        objective=f"{child_task.title}: {child_task.description}",
+        acceptance_criteria=child_task.acceptance_criteria,
+        relevant_files=child_task.context_refs,
+        context_refs=list(dict.fromkeys(context_refs)),
         constraints=constraints,
         metadata={
             "project_summary": project_summary,
-            "task_type": "ui_api_integration",
+            "planner_mode": metadata.get("planner_mode"),
+            "parent_goal": plan.goal,
+            "task_type": metadata.get("task_type"),
+            "target_area": metadata.get("target_area"),
+            "source_task_id": child_task.id,
         },
     )
 
@@ -161,7 +153,8 @@ def probe_project(
     results_root.mkdir(parents=True, exist_ok=True)
 
     project_summary = summarize_project(project, frontend)
-    task_pack = build_task_pack(project_summary, task)
+    dynamic_plan = TaskPlanner(project).create_dynamic_plan(task)
+    task_pack = build_task_pack(project_summary, dynamic_plan)
     profile = build_profile(project_summary)
     verifier = Verifier(project)
     detected_type = verifier.detect_project_type(frontend.relative_to(project))
@@ -187,6 +180,7 @@ def probe_project(
         "run_id": run_id,
         "project_summary": project_summary,
         "detected_frontend_type": detected_type,
+        "dynamic_plan": dynamic_plan.to_dict(),
         "task_pack": {
             **asdict(task_pack),
             "prompt_preview": task_pack.to_prompt(),

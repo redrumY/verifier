@@ -13,6 +13,7 @@ def test_frontend_plan_has_standard_six_tasks(tmp_path: Path):
 
     plan = planner.create_frontend_plan("生成一个可运行 React 网页")
 
+    assert plan.metadata["planner_mode"] == "template_fallback"
     assert [task.id for task in plan.tasks] == [
         "task_001",
         "task_002",
@@ -67,3 +68,37 @@ def test_task_planner_rejects_paths_outside_root(tmp_path: Path):
 
     with pytest.raises(ValueError, match="escapes"):
         planner.save_plan(plan, tmp_path.parent / "plan.json")
+
+
+def test_task_planner_creates_dynamic_plan_from_repo_facts(tmp_path: Path):
+    (tmp_path / "package.json").write_text(json.dumps({
+        "scripts": {"start": "node backend/server.js"},
+        "dependencies": {"express": "^4.18.0"},
+    }))
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text(json.dumps({
+        "proxy": "http://localhost:5000",
+        "scripts": {"start": "react-scripts start", "build": "react-scripts build"},
+        "dependencies": {"react": "^18.0.0", "react-scripts": "5.0.1"},
+    }))
+    (frontend / "src").mkdir()
+    (frontend / "src" / "App.js").write_text("export default function App() { return null }")
+
+    planner = TaskPlanner(tmp_path)
+    plan = planner.create_dynamic_plan("在 Dashboard 增加目标统计摘要组件并接入 /api/goals 接口")
+
+    assert plan.metadata["planner_mode"] == "dynamic"
+    assert plan.metadata["repo_facts"]["frontend_stack"] == "create-react-app"
+    assert plan.metadata["repo_facts"]["backend_stack"] == "express"
+    assert [task.owner for task in plan.tasks] == ["planner", "planner", "coder", "verifier", "reviewer"]
+
+
+def test_task_planner_dynamic_plan_blocks_vague_request(tmp_path: Path):
+    planner = TaskPlanner(tmp_path)
+
+    plan = planner.create_dynamic_plan("优化这个项目")
+
+    assert plan.metadata["planner_mode"] == "clarification_required"
+    assert plan.tasks[0].status == "blocked"
+    assert plan.ready_tasks() == []

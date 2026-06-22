@@ -31,6 +31,9 @@ def test_probe_external_project_prepares_task_pack_and_sandbox(tmp_path: Path):
     assert output_path.exists()
     assert report["project_summary"]["frontend_stack"] == "create-react-app"
     assert report["project_summary"]["backend_stack"] == "express"
+    assert report["dynamic_plan"]["metadata"]["planner_mode"] == "dynamic"
+    assert report["dynamic_plan"]["metadata"]["task_type"] == "ui_api_integration"
     assert report["test_profile"]["browser"]["enabled"] is False
-    assert "Dashboard" in report["task_pack"]["objective"]
+    assert report["task_pack"]["role"] == "coder"
+    assert "Dashboard" in report["task_pack"]["metadata"]["parent_goal"]
     assert Path(report["sandbox_run"]["profile_path"]).exists()

@@ -139,9 +139,22 @@ class TaskPlanner:
             goal=user_request,
             tasks=tasks,
             metadata={
+                "planner_mode": "template_fallback",
+                "task_type": "generate_frontend_project",
                 "workflow": "natural language -> spec -> Vite project -> install/build -> browser verify -> repair -> report",
             },
         )
+
+    def create_dynamic_plan(self, user_request: str, project_dir: str | Path = ".") -> TaskPlan:
+        """Create a repo-aware task graph instead of using the old fixed template."""
+        from .dynamic_task_planner import DynamicTaskPlanner
+        from .repo_scanner import RepoScanner
+        from .requirement_analyzer import RequirementAnalyzer
+
+        project_root = self._resolve(project_dir)
+        repo_facts = RepoScanner(project_root).scan()
+        requirement = RequirementAnalyzer().analyze(user_request, repo_facts)
+        return DynamicTaskPlanner().create_plan(user_request, requirement, repo_facts)
 
     def save_plan(self, plan: TaskPlan, path: str | Path | None = None) -> Path:
         target = self._resolve(path or self.plans_dir / f"{plan.plan_id}.json")

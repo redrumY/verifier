@@ -1,5 +1,9 @@
 # 第 4 步：任务拆分设计
 
+> 更新说明：本文描述的是第一版固定 frontend-generation workflow，用来解释
+> `TaskPlan`、依赖、状态流转这些基础概念。真实项目里的默认规划路径已经升级为
+> repo-aware dynamic planner，见 [动态任务规划设计](dynamic-task-planning-zh.md)。
+
 这份文档解释第 4 步：为什么主 agent 先不写代码，而是先拆任务；如何把“生成一个
 前端网页”拆成可追踪的任务图；任务状态、依赖和上下文引用如何设计；以及面试时怎么讲。
 

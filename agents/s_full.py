@@ -128,11 +128,20 @@ PROJECT_VERIFIER = Verifier(WORKDIR)
 SANDBOX_RUNNER = DockerSandboxRunner(WORKDIR)
 
 
-def handle_plan_frontend_tasks(request: str, output_path: str = None) -> str:
-    plan = FRONTEND_TASK_PLANNER.create_frontend_plan(request)
+def handle_plan_frontend_tasks(
+    request: str,
+    output_path: str = None,
+    project_dir: str = ".",
+    mode: str = "dynamic",
+) -> str:
+    if mode == "template":
+        plan = FRONTEND_TASK_PLANNER.create_frontend_plan(request)
+    else:
+        plan = FRONTEND_TASK_PLANNER.create_dynamic_plan(request, project_dir=project_dir)
     path = FRONTEND_TASK_PLANNER.save_plan(plan, output_path)
     return json.dumps({
         "plan_path": str(path),
+        "planner_mode": plan.metadata.get("planner_mode", mode),
         "plan": plan.to_dict(),
         "ready_tasks": [task.to_dict() for task in plan.ready_tasks()],
     }, indent=2, ensure_ascii=False)
@@ -847,7 +856,12 @@ TOOL_HANDLERS = {
     "plan_approval":    lambda **kw: handle_plan_review(kw["request_id"], kw["approve"], kw.get("feedback", "")),
     "idle":             lambda **kw: "Lead does not idle.",
     "claim_task":       lambda **kw: TASK_MGR.claim(kw["task_id"], "lead"),
-    "plan_frontend_tasks": lambda **kw: handle_plan_frontend_tasks(kw["request"], kw.get("output_path")),
+    "plan_frontend_tasks": lambda **kw: handle_plan_frontend_tasks(
+        kw["request"],
+        kw.get("output_path"),
+        kw.get("project_dir", "."),
+        kw.get("mode", "dynamic"),
+    ),
     "generate_frontend_project": lambda **kw: handle_generate_frontend_project(
         kw["request"], kw.get("project_dir", "generated/frontend-app"), kw.get("name")
     ),
@@ -905,8 +919,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "claim_task", "description": "Claim a task from the board.",
      "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}}, "required": ["task_id"]}},
-    {"name": "plan_frontend_tasks", "description": "Create the standard six-step frontend generation task plan before writing code.",
-     "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "output_path": {"type": "string"}}, "required": ["request"]}},
+    {"name": "plan_frontend_tasks", "description": "Create a repo-aware dynamic task plan before writing code; use mode=template only for the old fixed frontend-generation fallback.",
+     "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "output_path": {"type": "string"}, "project_dir": {"type": "string"}, "mode": {"type": "string", "enum": ["dynamic", "template"]}}, "required": ["request"]}},
     {"name": "generate_frontend_project", "description": "Generate a complete Vite/React/TypeScript project from a natural language request.",
      "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "project_dir": {"type": "string"}, "name": {"type": "string"}}, "required": ["request"]}},
     {"name": "verify_project", "description": "Verify a generated project with project-type-specific commands and browser checks.",
