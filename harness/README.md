@@ -116,6 +116,27 @@ repo inspection
   -> diff and risk review
 ```
 
+## CoderWorkspaceRunner
+
+`harness.coder_workspace_runner.CoderWorkspaceRunner` executes coder-owned
+tasks without mutating the source repository. It builds a `TaskPack`, copies the
+source project into a per-task workspace, runs either a patch or a coder callback
+inside that workspace, generates `git diff --no-index` between baseline and
+workspace, and then verifies the isolated workspace locally or through
+`DockerSandboxRunner`.
+
+The current flow is:
+
+```text
+TaskPlan coder task
+  -> TaskPack
+  -> .workspaces/coder-runs/<id>/workspace
+  -> patch or coder tool loop
+  -> outputs/workspace.diff
+  -> Verifier or DockerSandboxRunner
+  -> task.result
+```
+
 ## FrontendGenerator
 
 `harness.frontend_generator.FrontendGenerator` turns a natural language request

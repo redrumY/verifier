@@ -7,6 +7,8 @@ import types
 import unittest
 from pathlib import Path
 
+from harness.task_planner import AgentTask, TaskPlan
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "agents" / "s_full.py"
@@ -240,6 +242,44 @@ class BackgroundManagerTests(unittest.TestCase):
 
             self.assertEqual(result["status"], "passed")
             self.assertEqual(result["run_id"], "run_tool")
+
+    def test_run_coder_workspace_task_tool_updates_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+            plan = TaskPlan(
+                goal="update UI",
+                plan_id="workspace_tool_plan",
+                tasks=[
+                    AgentTask(id="task_001", owner="planner", status="completed", title="inspect"),
+                    AgentTask(
+                        id="task_002",
+                        owner="coder",
+                        status="pending",
+                        title="edit UI",
+                        depends_on=["task_001"],
+                    ),
+                ],
+            )
+            plan_path = module.FRONTEND_TASK_PLANNER.save_plan(plan, ".tasks/plans/workspace_tool_plan.json")
+
+            class FakeCoderWorkspaceRunner:
+                def run_coder_task(self, plan, **kwargs):
+                    plan.task_by_id(kwargs["task_id"]).status = "completed"
+                    return types.SimpleNamespace(to_dict=lambda: {
+                        "status": "passed",
+                        "task_status": "completed",
+                        "diff_path": "outputs/workspace.diff",
+                    })
+
+            module.CODER_WORKSPACE_RUNNER = FakeCoderWorkspaceRunner()
+            payload = json.loads(module.handle_run_coder_workspace_task(
+                "task_002",
+                plan_path=str(plan_path),
+                verification_mode="none",
+            ))
+
+            self.assertEqual(payload["result"]["status"], "passed")
+            self.assertEqual(payload["plan"]["tasks"][1]["status"], "completed")
 
 
 if __name__ == "__main__":

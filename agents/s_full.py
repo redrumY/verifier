@@ -54,6 +54,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from harness.context_manager import ContextManager
+from harness.coder_workspace_runner import CoderWorkspaceRunner
 from harness.frontend_generator import FrontendGenerator
 from harness.model_gateway import ModelGateway
 from harness.sandbox_runner import DockerSandboxRunner, frontend_ui_component_profile
@@ -126,6 +127,11 @@ FRONTEND_TASK_PLANNER = TaskPlanner(WORKDIR, gateway=GATEWAY, use_llm_planner=Tr
 FRONTEND_GENERATOR = FrontendGenerator(WORKDIR)
 PROJECT_VERIFIER = Verifier(WORKDIR)
 SANDBOX_RUNNER = DockerSandboxRunner(WORKDIR)
+CODER_WORKSPACE_RUNNER = CoderWorkspaceRunner(
+    WORKDIR,
+    context_manager=CONTEXTS,
+    task_planner=FRONTEND_TASK_PLANNER,
+)
 
 
 def handle_plan_frontend_tasks(
@@ -196,6 +202,153 @@ def handle_prepare_docker_sandbox(
 def handle_run_docker_sandbox(run_dir: str) -> str:
     result = SANDBOX_RUNNER.run(run_dir)
     return json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
+
+
+def load_workspace_task_plan(plan_path: str = None):
+    if plan_path:
+        return FRONTEND_TASK_PLANNER.load_plan(plan_path), plan_path
+    dynamic_path = FRONTEND_TASK_PLANNER.plans_dir / "dynamic_task_plan.json"
+    if dynamic_path.exists():
+        return FRONTEND_TASK_PLANNER.load_plan(dynamic_path), dynamic_path
+    return FRONTEND_TASK_PLANNER.load_plan(), None
+
+
+def workspace_safe_path(workspace_dir: Path, path: str) -> Path:
+    target = (workspace_dir / path).resolve()
+    if not target.is_relative_to(workspace_dir.resolve()):
+        raise ValueError(f"Path escapes isolated workspace: {path}")
+    return target
+
+
+def run_workspace_coder_tool_loop(
+    workspace_dir: Path,
+    task_pack,
+    max_rounds: int = 20,
+) -> dict:
+    def ws_read(path: str, limit: int = None) -> str:
+        try:
+            lines = workspace_safe_path(workspace_dir, path).read_text().splitlines()
+            if limit and limit < len(lines):
+                lines = lines[:limit] + [f"... ({len(lines) - limit} more)"]
+            return "\n".join(lines)[:50000]
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    def ws_write(path: str, content: str) -> str:
+        try:
+            target = workspace_safe_path(workspace_dir, path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+            return f"Wrote {len(content)} bytes to {path}"
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    def ws_edit(path: str, old_text: str, new_text: str) -> str:
+        try:
+            target = workspace_safe_path(workspace_dir, path)
+            text = target.read_text()
+            if old_text not in text:
+                return "Error: old_text not found"
+            target.write_text(text.replace(old_text, new_text, 1))
+            return f"Edited {path}"
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    def ws_bash(command: str) -> str:
+        dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
+        if any(item in command for item in dangerous):
+            return "Error: Dangerous command blocked"
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=workspace_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            output = (completed.stdout + completed.stderr).strip()
+            return output[:50000] if output else "(no output)"
+        except subprocess.TimeoutExpired:
+            return "Error: Timeout (120s)"
+
+    tools = [
+        {"name": "bash", "description": "Run a command inside the isolated coder workspace.",
+         "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+        {"name": "read_file", "description": "Read a file inside the isolated coder workspace.",
+         "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
+        {"name": "write_file", "description": "Write a file inside the isolated coder workspace.",
+         "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
+        {"name": "edit_file", "description": "Replace exact text inside a workspace file.",
+         "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
+    ]
+    handlers = {
+        "bash": lambda **kw: ws_bash(kw["command"]),
+        "read_file": lambda **kw: ws_read(kw["path"], kw.get("limit")),
+        "write_file": lambda **kw: ws_write(kw["path"], kw["content"]),
+        "edit_file": lambda **kw: ws_edit(kw["path"], kw["old_text"], kw["new_text"]),
+    }
+    messages = [{"role": "user", "content": task_pack.to_prompt()}]
+    system = (
+        "You are the Coder agent. Modify code only through the provided tools. "
+        f"You are working inside an isolated workspace at {workspace_dir}. "
+        "Keep changes scoped to the task acceptance criteria and report a concise summary."
+    )
+    summary = "(coder produced no summary)"
+    tool_calls = 0
+    rounds = 0
+    for rounds in range(1, max_rounds + 1):
+        response = call_model("coder", messages, system=system, tools=tools, max_tokens=12000)
+        content = getattr(response, "content", response)
+        messages.append({"role": "assistant", "content": content})
+        if getattr(response, "stop_reason", None) != "tool_use":
+            if isinstance(content, str):
+                summary = content
+            else:
+                summary = "".join(getattr(block, "text", "") for block in content if hasattr(block, "text")) or summary
+            break
+        tool_results = []
+        for block in content:
+            if getattr(block, "type", None) != "tool_use":
+                continue
+            tool_calls += 1
+            handler = handlers.get(block.name, lambda **kw: "Unknown tool")
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": str(handler(**block.input))[:50000],
+            })
+        messages.append({"role": "user", "content": tool_results})
+    return {"summary": summary, "rounds": rounds, "tool_calls": tool_calls}
+
+
+def handle_run_coder_workspace_task(
+    task_id: str,
+    plan_path: str = None,
+    source_project_dir: str = ".",
+    patch_text: str = None,
+    verification_mode: str = "local",
+    run_sandbox: bool = False,
+    run_id: str = None,
+    use_llm_coder: bool = False,
+) -> str:
+    plan, resolved_plan_path = load_workspace_task_plan(plan_path)
+    coder_callback = run_workspace_coder_tool_loop if use_llm_coder else None
+    result = CODER_WORKSPACE_RUNNER.run_coder_task(
+        plan,
+        task_id=task_id,
+        source_project_dir=source_project_dir,
+        patch_text=patch_text,
+        coder_callback=coder_callback,
+        verification_mode=verification_mode,
+        run_sandbox=run_sandbox,
+        run_id=run_id,
+    )
+    FRONTEND_TASK_PLANNER.save_plan(plan, resolved_plan_path)
+    return json.dumps({
+        "result": result.to_dict(),
+        "plan": plan.to_dict(),
+    }, indent=2, ensure_ascii=False, default=str)
 
 
 # === SECTION: base_tools ===
@@ -876,6 +1029,16 @@ TOOL_HANDLERS = {
         kw["project_dir"], kw.get("patch_text"), kw.get("run_id")
     ),
     "run_docker_sandbox": lambda **kw: handle_run_docker_sandbox(kw["run_dir"]),
+    "run_coder_workspace_task": lambda **kw: handle_run_coder_workspace_task(
+        kw["task_id"],
+        kw.get("plan_path"),
+        kw.get("source_project_dir", "."),
+        kw.get("patch_text"),
+        kw.get("verification_mode", "local"),
+        kw.get("run_sandbox", False),
+        kw.get("run_id"),
+        kw.get("use_llm_coder", False),
+    ),
 }
 
 TOOLS = [
@@ -935,6 +1098,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "patch_text": {"type": "string"}, "run_id": {"type": "string"}}, "required": ["project_dir"]}},
     {"name": "run_docker_sandbox", "description": "Run a prepared Docker sandbox and return the sandbox execution result.",
      "input_schema": {"type": "object", "properties": {"run_dir": {"type": "string"}}, "required": ["run_dir"]}},
+    {"name": "run_coder_workspace_task", "description": "Run a coder-owned TaskPlan task inside an isolated workspace, generate a git diff, and verify locally or with Docker sandbox.",
+     "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "plan_path": {"type": "string"}, "source_project_dir": {"type": "string"}, "patch_text": {"type": "string"}, "verification_mode": {"type": "string", "enum": ["none", "local", "sandbox"]}, "run_sandbox": {"type": "boolean"}, "run_id": {"type": "string"}, "use_llm_coder": {"type": "boolean"}}, "required": ["task_id"]}},
 ]
 
 

@@ -16,6 +16,7 @@ verification-first coding agent harness。
 - [第 5 步：生成完整前端工程设计](docs/frontend-generation-zh.md)
 - [第 6 步：验证代码质量设计](docs/verifier-zh.md)
 - [第 7 步：Docker Sandbox Runner 设计](docs/docker-sandbox-runner-zh.md)
+- [第 7.5 步：CoderWorkspaceRunner 隔离执行设计](docs/coder-workspace-runner-zh.md)
 - [第 8 步：受控 Agent Workflow 状态机设计](docs/agent-workflow-state-machine-zh.md)
 - [第 9 步：失败反馈闭环设计](docs/failure-feedback-loop-zh.md)
 - [第 10 步：工程化效果验证设计](docs/evaluation-harness-zh.md)

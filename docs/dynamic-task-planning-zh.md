@@ -268,6 +268,7 @@ Hermes 这类 agent 的关键启发不是“固定几个 worker”，而是：
 | durable task graph | `harness/task_planner.py` + `.tasks/plans/*.json` |
 | repo-aware planning | `harness/repo_scanner.py` + `harness/requirement_analyzer.py` |
 | child task handoff | `TaskPack` |
+| isolated coder execution | `CoderWorkspaceRunner` |
 | deterministic verification | `Verifier` + `DockerSandboxRunner` |
 
 这里还没有完整 SQLite Kanban，但已经把任务图、状态、依赖和子 agent 输入结构化了。下一步如果要更像

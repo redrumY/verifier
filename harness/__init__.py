@@ -10,6 +10,11 @@ from .context_manager import (
     SessionSummary,
     TaskPack,
 )
+from .coder_workspace_runner import (
+    CoderWorkspaceResult,
+    CoderWorkspaceRun,
+    CoderWorkspaceRunner,
+)
 from .dynamic_task_planner import DynamicTaskPlanner, TaskTemplate
 from .frontend_generator import (
     FrontendGenerator,
@@ -76,6 +81,9 @@ __all__ = [
     "CompressionRecord",
     "CompressionSummary",
     "ContextManager",
+    "CoderWorkspaceResult",
+    "CoderWorkspaceRun",
+    "CoderWorkspaceRunner",
     "DEFAULT_ROLE_POLICIES",
     "DockerSandboxRunner",
     "DynamicTaskPlanner",
