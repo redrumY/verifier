@@ -2,6 +2,10 @@
 
 from .context_manager import (
     AgentSessionState,
+    COMPRESSION_SUMMARY_KEYS,
+    COMPRESSION_TRIGGERS,
+    CompressionRecord,
+    CompressionSummary,
     ContextManager,
     SessionSummary,
     TaskPack,
@@ -21,6 +25,10 @@ from .model_gateway import (
 __all__ = [
     "AgentSessionState",
     "AgentRole",
+    "COMPRESSION_SUMMARY_KEYS",
+    "COMPRESSION_TRIGGERS",
+    "CompressionRecord",
+    "CompressionSummary",
     "ContextManager",
     "DEFAULT_ROLE_POLICIES",
     "GatewayCallRecord",

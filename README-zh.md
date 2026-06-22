@@ -10,6 +10,7 @@ verification-first coding agent harness。
 更详细的数据流和面试讲法见：
 
 - [ModelGateway + ContextManager 数据流](docs/model-gateway-context-flow-zh.md)
+- [第 3 步：上下文压缩设计](docs/context-compression-zh.md)
 
 ```text
 用户需求

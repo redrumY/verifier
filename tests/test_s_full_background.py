@@ -121,6 +121,33 @@ class BackgroundManagerTests(unittest.TestCase):
             self.assertIn("agent_summary", serialized)
             self.assertIn("subagent done", serialized)
 
+    def test_auto_compact_writes_fixed_context_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load_s_full_module(Path(tmp))
+            session = module.CONTEXTS.create_session("planner", "用户要生成一个可运行 React 网页")
+            summary = {
+                "goal": "用户要生成一个可运行 React 网页",
+                "decisions": ["使用 Vite + React + TS"],
+                "files_changed": ["package.json"],
+                "open_issues": ["还没跑浏览器验证"],
+                "next_actions": ["npm run build"],
+            }
+
+            module.call_model = lambda *args, **kwargs: types.SimpleNamespace(
+                content=[types.SimpleNamespace(text=json.dumps(summary, ensure_ascii=False))]
+            )
+
+            compacted = module.auto_compact(
+                [{"role": "user", "content": "make a React app"}],
+                session_id=session.session_id,
+                trigger="phase_transition",
+            )
+
+            stored_summary = module.CONTEXTS.get_messages(session.session_id)[0]["content"]["summary"]
+            self.assertEqual(stored_summary, summary)
+            self.assertIn('"goal": "用户要生成一个可运行 React 网页"', compacted[0]["content"])
+            self.assertIn("phase_transition", compacted[0]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,22 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+COMPRESSION_SUMMARY_KEYS = (
+    "goal",
+    "decisions",
+    "files_changed",
+    "open_issues",
+    "next_actions",
+)
+
+COMPRESSION_TRIGGERS = {
+    "message_threshold",
+    "tool_result_too_long",
+    "child_agent_complete",
+    "phase_transition",
+    "manual",
+}
+
 
 def _now() -> float:
     return time.time()
@@ -62,6 +78,54 @@ class TaskPack:
 
 
 @dataclass
+class CompressionSummary:
+    goal: str
+    decisions: list[str] = field(default_factory=list)
+    files_changed: list[str] = field(default_factory=list)
+    open_issues: list[str] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {key: getattr(self, key) for key in COMPRESSION_SUMMARY_KEYS}
+
+    def to_prompt_text(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
+
+
+@dataclass
+class CompressionRecord:
+    session_id: str
+    role: str
+    trigger: str
+    summary: CompressionSummary
+    transcript_path: str
+    working_memory: dict[str, Any] = field(default_factory=dict)
+    long_term_memory: dict[str, Any] = field(default_factory=dict)
+    short_term_count: int = 0
+    created_at: float = field(default_factory=_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["summary"] = self.summary.to_dict()
+        return payload
+
+    def to_context_message(self) -> dict[str, Any]:
+        return {
+            "role": "user",
+            "content": {
+                "type": "context_summary",
+                "summary": self.summary.to_dict(),
+            },
+            "metadata": {
+                "compacted": True,
+                "trigger": self.trigger,
+                "transcript_path": self.transcript_path,
+            },
+            "ts": _now(),
+        }
+
+
+@dataclass
 class SessionSummary:
     session_id: str
     role: str
@@ -75,12 +139,23 @@ class SessionSummary:
     transcript_path: str | None = None
     created_at: float = field(default_factory=_now)
 
+    def to_compression_summary(self) -> CompressionSummary:
+        return CompressionSummary(
+            goal=self.objective,
+            decisions=list(self.decisions),
+            files_changed=list(self.files_changed),
+            open_issues=list(self.open_issues),
+            next_actions=list(self.next_actions),
+        )
+
     def to_parent_message(self) -> dict[str, Any]:
         return {
             "role": "user",
             "content": {
                 "type": "agent_summary",
                 "summary": asdict(self),
+                "compression_trigger": "child_agent_complete",
+                "compressed_context": self.to_compression_summary().to_dict(),
             },
         }
 
@@ -171,6 +246,51 @@ class ContextManager:
             return session.messages[-self.max_recent_messages:]
         return list(session.messages)
 
+    def should_compress(
+        self,
+        messages: list[dict[str, Any]],
+        trigger: str | None = None,
+        message_char_threshold: int | None = None,
+    ) -> bool:
+        if trigger in COMPRESSION_TRIGGERS:
+            return True
+        if self._has_long_tool_result(messages):
+            return True
+        if message_char_threshold is not None:
+            return self._estimate_message_chars(messages) > message_char_threshold
+        return False
+
+    def build_compression_prompt(
+        self,
+        goal: str,
+        short_term_context: Any,
+        working_memory: dict[str, Any] | None = None,
+        long_term_memory: dict[str, Any] | None = None,
+        trigger: str = "manual",
+    ) -> str:
+        schema = {key: [] for key in COMPRESSION_SUMMARY_KEYS}
+        schema["goal"] = goal
+        return "\n".join([
+            "Compress the agent context into exactly one JSON object.",
+            "Return only valid JSON. Do not include markdown fences.",
+            f"Trigger: {trigger}",
+            "",
+            "Required schema:",
+            json.dumps(schema, indent=2, ensure_ascii=False),
+            "",
+            "<short_term_context>",
+            str(short_term_context),
+            "</short_term_context>",
+            "",
+            "<working_memory>",
+            json.dumps(self._jsonable(working_memory or {}), indent=2, ensure_ascii=False),
+            "</working_memory>",
+            "",
+            "<long_term_memory>",
+            json.dumps(self._jsonable(long_term_memory or {}), indent=2, ensure_ascii=False),
+            "</long_term_memory>",
+        ])
+
     def build_task_pack(
         self,
         role: str,
@@ -252,6 +372,62 @@ class ContextManager:
             self.save_session(parent)
         return summary
 
+    def compress_session(
+        self,
+        session_id: str,
+        summary: CompressionSummary | dict[str, Any] | str | None = None,
+        trigger: str = "manual",
+        working_memory: dict[str, Any] | None = None,
+        long_term_memory: dict[str, Any] | None = None,
+    ) -> CompressionRecord:
+        session = self.load_session(session_id)
+        transcript = self.archive_transcript(session_id)
+        recent = session.messages[-self.max_recent_messages:]
+        normalized = self.normalize_compression_summary(summary, session.objective)
+        record = CompressionRecord(
+            session_id=session.session_id,
+            role=session.role,
+            trigger=trigger,
+            summary=normalized,
+            transcript_path=str(transcript),
+            working_memory=self._jsonable(working_memory or {}),
+            long_term_memory=self._jsonable(long_term_memory or {}),
+            short_term_count=len(session.messages),
+        )
+        session.messages = [record.to_context_message(), *recent]
+        session.summaries.append(record.to_dict())
+        self.save_session(session)
+        self._compression_path(session_id).write_text(
+            json.dumps(record.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return record
+
+    def normalize_compression_summary(
+        self,
+        summary: CompressionSummary | dict[str, Any] | str | None,
+        fallback_goal: str,
+    ) -> CompressionSummary:
+        if isinstance(summary, CompressionSummary):
+            return summary
+        payload: dict[str, Any]
+        if isinstance(summary, dict):
+            payload = summary
+        elif isinstance(summary, str):
+            payload = self._parse_json_object(summary)
+            if not payload:
+                payload = {"goal": fallback_goal, "open_issues": [f"Unstructured summary: {summary[:500]}"]}
+        else:
+            payload = {"goal": fallback_goal}
+
+        return CompressionSummary(
+            goal=str(payload.get("goal") or fallback_goal),
+            decisions=self._string_list(payload.get("decisions")),
+            files_changed=self._string_list(payload.get("files_changed")),
+            open_issues=self._string_list(payload.get("open_issues")),
+            next_actions=self._string_list(payload.get("next_actions")),
+        )
+
     def compact_session(self, session_id: str, summary_text: str | None = None) -> SessionSummary:
         session = self.load_session(session_id)
         transcript = self.archive_transcript(session_id)
@@ -290,6 +466,9 @@ class ContextManager:
     def _summary_path(self, session_id: str) -> Path:
         return self.summaries_dir / f"{session_id}.json"
 
+    def _compression_path(self, session_id: str) -> Path:
+        return self.summaries_dir / f"{session_id}.compression.json"
+
     def _trim_content(self, content: Any) -> Any:
         if isinstance(content, str):
             return content
@@ -321,6 +500,49 @@ class ContextManager:
         if hasattr(value, "__dict__"):
             return self._jsonable(vars(value))
         return str(value)
+
+    def _parse_json_object(self, text: str) -> dict[str, Any]:
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return {}
+        try:
+            parsed = json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _string_list(self, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item).strip()]
+        if isinstance(value, tuple):
+            return [str(item) for item in value if str(item).strip()]
+        text = str(value).strip()
+        return [text] if text else []
+
+    def _estimate_message_chars(self, messages: list[dict[str, Any]]) -> int:
+        return len(json.dumps(self._jsonable(messages), ensure_ascii=False))
+
+    def _has_long_tool_result(self, messages: list[dict[str, Any]]) -> bool:
+        for message in messages:
+            content = message.get("content")
+            blocks = content if isinstance(content, list) else [content]
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_result":
+                    continue
+                text = block.get("content")
+                if isinstance(text, str) and len(text) > self.max_tool_result_chars:
+                    return True
+        return False
 
     def _deterministic_summary(self, session: AgentSessionState) -> str:
         return (

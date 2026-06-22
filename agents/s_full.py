@@ -255,6 +255,7 @@ def run_subagent(prompt: str, agent_type: str = "Explore",
     CONTEXTS.complete_session(
         child_session.session_id,
         result=summary_text,
+        decisions=[summary_text],
         attach_to_parent=parent_session_id is not None,
     )
     return summary_text
@@ -292,6 +293,50 @@ class SkillLoader:
 def estimate_tokens(messages: list) -> int:
     return len(json.dumps(messages, default=str)) // 4
 
+def recent_tool_results(messages: list, limit: int = 3) -> list[str]:
+    results = []
+    for msg in reversed(messages):
+        content = msg.get("content")
+        blocks = content if isinstance(content, list) else [content]
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                text = str(block.get("content", ""))
+                results.append(text[:1000])
+                if len(results) >= limit:
+                    return list(reversed(results))
+    return list(reversed(results))
+
+def has_long_tool_result(blocks: list) -> bool:
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        if len(str(block.get("content", ""))) > CONTEXTS.max_tool_result_chars:
+            return True
+    return False
+
+def build_working_memory(messages: list) -> dict:
+    return {
+        "todos": TODO.items,
+        "task_board": TASK_MGR.list_all(),
+        "recent_tool_results": recent_tool_results(messages),
+    }
+
+def build_long_term_memory() -> dict:
+    return {
+        "project_root": str(WORKDIR),
+        "runtime_modules": ["ModelGateway", "ContextManager"],
+        "target_product": "frontend generation and verification harness",
+        "preferred_frontend_stack": ["Vite", "React", "TypeScript"],
+    }
+
+def context_goal(session_id: str | None) -> str:
+    if not session_id:
+        return "用户要生成一个可运行 React 网页"
+    try:
+        return CONTEXTS.load_session(session_id).objective
+    except FileNotFoundError:
+        return "用户要生成一个可运行 React 网页"
+
 def microcompact(messages: list):
     indices = []
     for i, msg in enumerate(messages):
@@ -305,23 +350,46 @@ def microcompact(messages: list):
         if isinstance(part.get("content"), str) and len(part["content"]) > 100:
             part["content"] = "[cleared]"
 
-def auto_compact(messages: list, session_id: str | None = None) -> list:
+def auto_compact(
+    messages: list,
+    session_id: str | None = None,
+    trigger: str = "message_threshold",
+) -> list:
     TRANSCRIPT_DIR.mkdir(exist_ok=True)
     path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
     with open(path, "w") as f:
         for msg in messages:
             f.write(json.dumps(msg, default=str) + "\n")
     conv_text = json.dumps(messages, default=str)[-80000:]
+    goal = context_goal(session_id)
+    working_memory = build_working_memory(messages)
+    long_term_memory = build_long_term_memory()
+    prompt = CONTEXTS.build_compression_prompt(
+        goal=goal,
+        short_term_context=conv_text,
+        working_memory=working_memory,
+        long_term_memory=long_term_memory,
+        trigger=trigger,
+    )
     resp = call_model(
         "summarizer",
-        messages=[{"role": "user", "content": f"Summarize for continuity:\n{conv_text}"}],
+        messages=[{"role": "user", "content": prompt}],
         max_tokens=2000,
     )
-    summary = resp.content[0].text
+    summary_text = resp.content[0].text
     if session_id:
-        CONTEXTS.compact_session(session_id, summary)
+        record = CONTEXTS.compress_session(
+            session_id,
+            summary_text,
+            trigger=trigger,
+            working_memory=working_memory,
+            long_term_memory=long_term_memory,
+        )
+        summary = record.summary
+    else:
+        summary = CONTEXTS.normalize_compression_summary(summary_text, goal)
     return [
-        {"role": "user", "content": f"[Compressed. Transcript: {path}]\n{summary}"},
+        {"role": "user", "content": f"[Compressed. Trigger: {trigger}. Transcript: {path}]\n{summary.to_prompt_text()}"},
     ]
 
 
@@ -768,7 +836,7 @@ def agent_loop(messages: list, session_id: str | None = None):
         microcompact(messages)
         if estimate_tokens(messages) > TOKEN_THRESHOLD:
             print("[auto-compact triggered]")
-            messages[:] = auto_compact(messages, session_id=session_id)
+            messages[:] = auto_compact(messages, session_id=session_id, trigger="message_threshold")
         # s08: drain background notifications
         notifs = BG.drain()
         if notifs:
@@ -825,10 +893,14 @@ def agent_loop(messages: list, session_id: str | None = None):
             results.append({"type": "text", "text": "<reminder>Update your todos.</reminder>"})
         messages.append({"role": "user", "content": results})
         record_context_message(session_id, "user", results, {"source": "tool_results"})
+        if has_long_tool_result(results):
+            print("[tool-result compact triggered]")
+            messages[:] = auto_compact(messages, session_id=session_id, trigger="tool_result_too_long")
+            continue
         # s06: manual compress
         if manual_compress:
             print("[manual compact]")
-            messages[:] = auto_compact(messages, session_id=session_id)
+            messages[:] = auto_compact(messages, session_id=session_id, trigger="phase_transition")
             return
 
 
@@ -846,7 +918,7 @@ if __name__ == "__main__":
         if query.strip() == "/compact":
             if history:
                 print("[manual compact via /compact]")
-                history[:] = auto_compact(history, session_id=lead_session_id)
+                history[:] = auto_compact(history, session_id=lead_session_id, trigger="manual")
             continue
         if query.strip() == "/tasks":
             print(TASK_MGR.list_all())
