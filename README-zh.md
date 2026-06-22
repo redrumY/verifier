@@ -7,6 +7,10 @@ verification-first coding agent harness。
 
 ## 当前运行结构
 
+更详细的数据流和面试讲法见：
+
+- [ModelGateway + ContextManager 数据流](docs/model-gateway-context-flow-zh.md)
+
 ```text
 用户需求
   -> agents/s_full.py
