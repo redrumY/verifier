@@ -36,6 +36,21 @@ verification-first coding agent harness。
 python agents/s_full.py
 ```
 
+如果要使用 DeepSeek v4 Pro，本地复制配置模板：
+
+```sh
+cp .env.example .env
+```
+
+然后只在本机 `.env` 里填写真实 `DEEPSEEK_API_KEY`。`.env` 已经被 `.gitignore`
+忽略，不要把真实 key 提交到 GitHub。
+
+启动 DeepSeek agent：
+
+```sh
+bash scripts/run_deepseek_agent.sh
+```
+
 ## 为什么 gateway 要配合 full.py
 
 `agents/s_full.py` 是现在最接近“完整 agent loop”的入口，里面已经有：
@@ -68,7 +83,7 @@ call_model("coder", messages, system=..., tools=...)
 
 `harness/model_gateway.py` 负责：
 
-- 统一读取 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
+- 统一读取 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY`
 - 根据 agent role 分配模型
 - 控制并发
 - 控制 token budget

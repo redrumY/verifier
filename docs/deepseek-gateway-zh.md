@@ -30,6 +30,20 @@ DEEPSEEK_THINKING=enabled
 DEEPSEEK_REASONING_EFFORT=high
 ```
 
+仓库里提供 `.env.example`，只放占位符：
+
+```sh
+cp .env.example .env
+```
+
+真实 key 只写入本机 `.env`。`.env` 已经在 `.gitignore` 中，不应该提交。
+
+也可以直接运行：
+
+```sh
+bash scripts/run_deepseek_agent.sh
+```
+
 ## 2. 安全边界
 
 不要把 key：
