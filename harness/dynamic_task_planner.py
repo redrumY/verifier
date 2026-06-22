@@ -233,6 +233,8 @@ class DynamicTaskPlanner:
             "assumptions": requirement.assumptions,
             "questions": requirement.questions,
             "constraints": requirement.constraints,
+            "analyzer": requirement.metadata.get("analyzer", "rule_based"),
+            "requirement_metadata": requirement.metadata,
             "repo_facts": repo_facts.to_dict(),
             "workflow": "repo scan -> requirement analysis -> dynamic task graph -> validation -> execution",
         }

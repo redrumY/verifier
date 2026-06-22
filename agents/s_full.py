@@ -122,7 +122,7 @@ def call_model(role: str, messages: list, system: str = None,
 
 
 # === SECTION: frontend_workflow ===
-FRONTEND_TASK_PLANNER = TaskPlanner(WORKDIR)
+FRONTEND_TASK_PLANNER = TaskPlanner(WORKDIR, gateway=GATEWAY, use_llm_planner=True)
 FRONTEND_GENERATOR = FrontendGenerator(WORKDIR)
 PROJECT_VERIFIER = Verifier(WORKDIR)
 SANDBOX_RUNNER = DockerSandboxRunner(WORKDIR)
@@ -133,11 +133,16 @@ def handle_plan_frontend_tasks(
     output_path: str = None,
     project_dir: str = ".",
     mode: str = "dynamic",
+    use_llm_planner: bool = True,
 ) -> str:
     if mode == "template":
         plan = FRONTEND_TASK_PLANNER.create_frontend_plan(request)
     else:
-        plan = FRONTEND_TASK_PLANNER.create_dynamic_plan(request, project_dir=project_dir)
+        plan = FRONTEND_TASK_PLANNER.create_dynamic_plan(
+            request,
+            project_dir=project_dir,
+            use_llm=use_llm_planner,
+        )
     path = FRONTEND_TASK_PLANNER.save_plan(plan, output_path)
     return json.dumps({
         "plan_path": str(path),
@@ -861,6 +866,7 @@ TOOL_HANDLERS = {
         kw.get("output_path"),
         kw.get("project_dir", "."),
         kw.get("mode", "dynamic"),
+        kw.get("use_llm_planner", True),
     ),
     "generate_frontend_project": lambda **kw: handle_generate_frontend_project(
         kw["request"], kw.get("project_dir", "generated/frontend-app"), kw.get("name")
@@ -919,8 +925,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "claim_task", "description": "Claim a task from the board.",
      "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}}, "required": ["task_id"]}},
-    {"name": "plan_frontend_tasks", "description": "Create a repo-aware dynamic task plan before writing code; use mode=template only for the old fixed frontend-generation fallback.",
-     "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "output_path": {"type": "string"}, "project_dir": {"type": "string"}, "mode": {"type": "string", "enum": ["dynamic", "template"]}}, "required": ["request"]}},
+    {"name": "plan_frontend_tasks", "description": "Create a repo-aware dynamic task plan before writing code; dynamic mode uses LLM structured requirement analysis through ModelGateway and falls back to rules.",
+     "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "output_path": {"type": "string"}, "project_dir": {"type": "string"}, "mode": {"type": "string", "enum": ["dynamic", "template"]}, "use_llm_planner": {"type": "boolean"}}, "required": ["request"]}},
     {"name": "generate_frontend_project", "description": "Generate a complete Vite/React/TypeScript project from a natural language request.",
      "input_schema": {"type": "object", "properties": {"request": {"type": "string"}, "project_dir": {"type": "string"}, "name": {"type": "string"}}, "required": ["request"]}},
     {"name": "verify_project", "description": "Verify a generated project with project-type-specific commands and browser checks.",

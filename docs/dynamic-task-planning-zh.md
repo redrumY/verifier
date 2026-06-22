@@ -72,11 +72,15 @@ production design: make the loop repo-aware and requirement-aware
 - 不用 LLM 做 repo scan，因为框架、脚本、目录结构用规则更稳定、便宜、可测试。
 - 相关文件候选是启发式的，后续可以加 code search、AST、ripgrep 搜索来增强。
 
-### RequirementAnalyzer：把自然语言变成结构化需求
+### RequirementAnalyzer / LLMRequirementAnalyzer：把自然语言变成结构化需求
 
 文件：`harness/requirement_analyzer.py`
 
-`RequirementAnalyzer` 当前是规则版，但接口按未来 LLM structured output 设计。它输出：
+`RequirementAnalyzer` 是规则版 fallback，`LLMRequirementAnalyzer` 是当前默认在
+`agents/s_full.py` 中使用的 prompt 版本。二者输出同一个 `RequirementSpec`，所以后面的
+`DynamicTaskPlanner` 不需要关心需求到底来自规则还是 LLM。
+
+输出结构：
 
 ```json
 {
@@ -91,7 +95,7 @@ production design: make the loop repo-aware and requirement-aware
 }
 ```
 
-当前支持的任务类型：
+支持的任务类型：
 
 - `generate_frontend_project`
 - `ui_api_integration`
@@ -104,11 +108,52 @@ production design: make the loop repo-aware and requirement-aware
 最重要的设计点：如果用户需求太宽，例如“优化这个项目”，它不会强行生成执行任务，而是返回
 `clarification_needed=true`。这时 planner 产出一个 blocked task，要求先问清楚。
 
+LLM prompt 设计：
+
+```text
+System:
+You are the requirement analysis component inside a coding agent.
+Your job is to classify the user's coding request before any code is edited.
+You must output one valid JSON object only.
+Do not include chain-of-thought or hidden reasoning.
+
+User:
+User request:
+...
+
+Repository facts:
+{
+  "frontend_stack": "create-react-app",
+  "backend_stack": "express",
+  "api_proxy": "http://localhost:5000",
+  "relevant_files": [...]
+}
+
+Output schema:
+{
+  "task_type": "...",
+  "target_area": "...",
+  "clarification_needed": false,
+  "questions": [],
+  "assumptions": [],
+  "acceptance_criteria": [],
+  "constraints": [],
+  "risk_level": "low|medium|high"
+}
+```
+
+为什么不让 LLM 直接生成 task graph：
+
+- LLM 只负责最模糊的语义判断：用户到底想干什么。
+- `DynamicTaskPlanner` 仍然用确定性代码生成任务图，便于测试和审计。
+- LLM 返回坏 JSON、超时、没配 key 时，自动回退到规则版 `RequirementAnalyzer`。
+- plan metadata 会记录 `analyzer=llm_structured` 或 `analyzer=rule_based_fallback`。
+
 面试讲法：
 
-> 需求分析层的职责不是证明 LLM 多聪明，而是把“能不能动手”判断清楚。明确任务进入执行图；
-> 模糊任务进入澄清图；高风险任务附带约束和验收标准。这样 agent 不会因为用户一句“优化一下”
-> 就扩大范围乱改。
+> 需求分析层的职责不是让 LLM 想到哪写到哪，而是让 LLM 在固定 schema 里完成语义分类。
+> 明确任务进入执行图；模糊任务进入澄清图；高风险任务附带约束和验收标准。这样 agent
+> 不会因为用户一句“优化一下”就扩大范围乱改。
 
 ### DynamicTaskPlanner：按任务类型生成任务图
 
@@ -182,14 +227,14 @@ flowchart TD
 - `VerificationReport`：确定性验证结果。
 - `FailureDigest`：失败日志结构化摘要。
 
-## 4. Prompt 模式：不是直接暴露 CoT
+## 4. Prompt 模式：Structured Planning，不直接暴露 CoT
 
-这个项目后续可以用 LLM 增强 `RequirementAnalyzer`，但 prompt 设计不应该要求模型输出完整
-chain-of-thought。更合适的是：
+当前 `LLMRequirementAnalyzer` 已经使用 prompt，但 prompt 只要求模型输出结构化 JSON，
+不要求输出完整 chain-of-thought。更合适的是：
 
 - Plan-and-Execute：先产出可执行任务图，再逐个执行。
 - ReAct-style tool loop：agent 在每轮根据观察选择工具，但工具结果进入结构化状态。
-- Structured Output：规划输出 JSON schema，例如 `task_type`、`acceptance_criteria`、`dependencies`。
+- Structured Output：需求分析输出 JSON schema，例如 `task_type`、`acceptance_criteria`、`constraints`。
 - Reflection/Review：失败后由 verifier/reviewer 给出结构化反馈，再进入下一轮修复。
 
 不建议的设计：
@@ -200,7 +245,7 @@ chain-of-thought。更合适的是：
 
 面试讲法：
 
-> Prompt 层不是让模型输出 CoT，而是让模型在受控 schema 里做决策。主循环类似
+> Prompt 层不是让模型输出 CoT，而是让模型在受控 schema 里做需求分类。主循环类似
 > ReAct，会根据 repo scan、验证日志、review 结果继续选择工具；但对外持久化的是任务状态、
 > 验收标准、失败摘要和最终报告，不保存模型的隐藏推理。
 
@@ -291,6 +336,19 @@ planner = TaskPlanner("/path/to/repo")
 plan = planner.create_dynamic_plan("在 Dashboard 增加目标统计摘要组件并接入 /api/goals 接口")
 ```
 
+使用 LLM structured planner：
+
+```python
+from harness.model_gateway import ModelGateway
+from harness.task_planner import TaskPlanner
+
+gateway = ModelGateway.from_env(call_log_path=".logs/model-calls.jsonl")
+planner = TaskPlanner("/path/to/repo", gateway=gateway, use_llm_planner=True)
+plan = planner.create_dynamic_plan("在 Dashboard 增加目标统计摘要组件并接入 /api/goals 接口")
+
+assert plan.metadata["analyzer"] in {"llm_structured", "rule_based_fallback"}
+```
+
 保留旧模板：
 
 ```python
@@ -338,7 +396,7 @@ python3 -m pytest tests/test_repo_scanner.py tests/test_requirement_analyzer.py 
 短期：
 
 - 给 `RepoScanner` 增加 `rg` 搜索，根据用户目标找更多相关文件。
-- 给 `RequirementAnalyzer` 加 LLM structured output，但保留规则版 fallback。
+- 给 `LLMRequirementAnalyzer` 增加更严格的 JSON schema 校验。
 - 给 `TaskPlan` 增加 artifact refs，例如 `api_contract.json`、`sandbox-report.json`、`screenshot.png`。
 
 中期：

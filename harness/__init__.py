@@ -36,7 +36,7 @@ from .model_gateway import (
     default_role_policies,
 )
 from .repo_scanner import PackageFacts, RepoFacts, RepoScanner
-from .requirement_analyzer import RequirementAnalyzer, RequirementSpec
+from .requirement_analyzer import LLMRequirementAnalyzer, RequirementAnalyzer, RequirementSpec
 from .sandbox_runner import (
     BrowserProfile,
     BrowserViewport,
@@ -91,6 +91,7 @@ __all__ = [
     "ModelGatewayError",
     "ModelGatewayResponse",
     "ModelPolicy",
+    "LLMRequirementAnalyzer",
     "PackageFacts",
     "REQUIRED_FRONTEND_FILES",
     "RepoFacts",

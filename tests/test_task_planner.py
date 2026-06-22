@@ -1,11 +1,35 @@
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
 import pytest
 
 from harness.task_planner import TaskPlanner
+
+
+class FakePlannerGateway:
+    def __init__(self):
+        self.calls = []
+
+    def call(self, **kwargs):
+        self.calls.append(kwargs)
+        return types.SimpleNamespace(
+            content=json.dumps({
+                "task_type": "ui_api_integration",
+                "target_area": "dashboard",
+                "clarification_needed": False,
+                "questions": [],
+                "assumptions": ["复用现有 API service"],
+                "acceptance_criteria": ["浏览器验证无 console error"],
+                "constraints": ["不修改数据库 schema"],
+                "risk_level": "medium",
+            }, ensure_ascii=False),
+            request_id="req_plan",
+            model="planner-model",
+            provider="fake",
+        )
 
 
 def test_frontend_plan_has_standard_six_tasks(tmp_path: Path):
@@ -102,3 +126,28 @@ def test_task_planner_dynamic_plan_blocks_vague_request(tmp_path: Path):
     assert plan.metadata["planner_mode"] == "clarification_required"
     assert plan.tasks[0].status == "blocked"
     assert plan.ready_tasks() == []
+
+
+def test_task_planner_dynamic_plan_can_use_llm_requirement_analyzer(tmp_path: Path):
+    (tmp_path / "package.json").write_text(json.dumps({
+        "scripts": {"start": "node backend/server.js"},
+        "dependencies": {"express": "^4.18.0"},
+    }))
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text(json.dumps({
+        "proxy": "http://localhost:5000",
+        "scripts": {"start": "react-scripts start", "build": "react-scripts build"},
+        "dependencies": {"react": "^18.0.0", "react-scripts": "5.0.1"},
+    }))
+    (frontend / "src").mkdir()
+    (frontend / "src" / "App.js").write_text("export default function App() { return null }")
+
+    gateway = FakePlannerGateway()
+    planner = TaskPlanner(tmp_path, gateway=gateway, use_llm_planner=True)
+    plan = planner.create_dynamic_plan("在 Dashboard 增加目标统计摘要组件")
+
+    assert gateway.calls
+    assert plan.metadata["analyzer"] == "llm_structured"
+    assert plan.metadata["requirement_metadata"]["llm_request_id"] == "req_plan"
+    assert plan.metadata["task_type"] == "ui_api_integration"

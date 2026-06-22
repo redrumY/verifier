@@ -86,8 +86,11 @@ small while preserving auditability.
 `harness.task_planner.TaskPlanner` creates dependency-aware task graphs before
 the lead agent writes code. `create_dynamic_plan()` scans repo facts, analyzes
 the user request, and selects a workflow for frontend generation, UI changes,
-UI/API integration, bug fixes, tests, or clarification. `create_frontend_plan()`
-is kept as the old standard frontend-generation template fallback.
+UI/API integration, bug fixes, tests, or clarification. When a `ModelGateway` is
+provided with `use_llm_planner=True`, requirement analysis uses a structured
+planner prompt and falls back to rules on provider or JSON failures.
+`create_frontend_plan()` is kept as the old standard frontend-generation
+template fallback.
 
 Each task records its owner, status, dependencies, context references, acceptance
 criteria, and result.

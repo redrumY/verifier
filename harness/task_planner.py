@@ -57,8 +57,10 @@ class TaskPlan:
 class TaskPlanner:
     """Build and persist a dependency-aware task graph for frontend work."""
 
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, gateway: Any = None, use_llm_planner: bool = False):
         self.root = Path(root)
+        self.gateway = gateway
+        self.use_llm_planner = use_llm_planner
         self.plans_dir = self.root / ".tasks" / "plans"
         self.plans_dir.mkdir(parents=True, exist_ok=True)
 
@@ -145,15 +147,26 @@ class TaskPlanner:
             },
         )
 
-    def create_dynamic_plan(self, user_request: str, project_dir: str | Path = ".") -> TaskPlan:
+    def create_dynamic_plan(
+        self,
+        user_request: str,
+        project_dir: str | Path = ".",
+        use_llm: bool | None = None,
+        gateway: Any = None,
+    ) -> TaskPlan:
         """Create a repo-aware task graph instead of using the old fixed template."""
         from .dynamic_task_planner import DynamicTaskPlanner
         from .repo_scanner import RepoScanner
-        from .requirement_analyzer import RequirementAnalyzer
+        from .requirement_analyzer import LLMRequirementAnalyzer, RequirementAnalyzer
 
         project_root = self._resolve(project_dir)
         repo_facts = RepoScanner(project_root).scan()
-        requirement = RequirementAnalyzer().analyze(user_request, repo_facts)
+        planner_gateway = gateway or self.gateway
+        should_use_llm = self.use_llm_planner if use_llm is None else use_llm
+        if should_use_llm and planner_gateway is not None:
+            requirement = LLMRequirementAnalyzer(planner_gateway).analyze(user_request, repo_facts)
+        else:
+            requirement = RequirementAnalyzer().analyze(user_request, repo_facts)
         return DynamicTaskPlanner().create_plan(user_request, requirement, repo_facts)
 
     def save_plan(self, plan: TaskPlan, path: str | Path | None = None) -> Path:
