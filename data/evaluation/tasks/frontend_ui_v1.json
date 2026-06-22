@@ -1,0 +1,73 @@
+{
+  "name": "frontend_ui_v1",
+  "description": "Small deterministic evaluation suite for frontend coding-agent harness behavior.",
+  "tasks": [
+    {
+      "id": "fe_generate_001",
+      "type": "generate_frontend_project",
+      "name": "crm-customer-list",
+      "prompt": "生成一个响应式 CRM 客户列表页面，包含搜索、客户状态和主要操作按钮。",
+      "acceptance": [
+        "package.json exists",
+        "src/App.tsx exists",
+        "npm run build passes",
+        "browser opens without console errors"
+      ]
+    },
+    {
+      "id": "fe_sandbox_001",
+      "type": "sandbox_prepare",
+      "name": "sandbox-ui-component",
+      "prompt": "生成一个可以在 sandbox 中验证的 React UI 组件页面。",
+      "acceptance": [
+        "sandbox manifest exists",
+        "sandbox execution writes verification report",
+        "source project remains clean"
+      ]
+    },
+    {
+      "id": "fe_failure_ts_001",
+      "type": "classify_failure",
+      "failure": {
+        "profile": "frontend-api-profile",
+        "failed_step": "build",
+        "command": "npm run build",
+        "exit_code": 1,
+        "stderr": "src/App.tsx:18:12 - error TS2741: Property 'onClick' is missing in type '{}' but required in type 'ButtonProps'."
+      },
+      "expected": {
+        "error_type": "typescript_error"
+      }
+    },
+    {
+      "id": "fe_failure_api_001",
+      "type": "classify_failure",
+      "failure": {
+        "profile": "frontend-api-profile",
+        "failed_step": "browser_check",
+        "command": "playwright browser_check",
+        "exit_code": 1,
+        "console_errors": [
+          "TypeError: fetch failed: ECONNREFUSED 127.0.0.1:9999"
+        ]
+      },
+      "expected": {
+        "error_type": "api_connection_error"
+      }
+    },
+    {
+      "id": "fe_failure_contract_001",
+      "type": "classify_failure",
+      "failure": {
+        "profile": "frontend-api-profile",
+        "failed_step": "browser_check",
+        "command": "playwright browser_check",
+        "exit_code": 1,
+        "stderr": "API contract mismatch: response schema requires user.name but UI accessed user.fullName in src/components/UserList.tsx"
+      },
+      "expected": {
+        "error_type": "api_contract_mismatch"
+      }
+    }
+  ]
+}

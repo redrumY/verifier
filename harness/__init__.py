@@ -16,6 +16,13 @@ from .frontend_generator import (
     GeneratedFrontendProject,
     REQUIRED_FRONTEND_FILES,
 )
+from .failure_feedback import (
+    AffectedFile,
+    FailureClassifier,
+    FailureDigest,
+    FailureEvidence,
+    FAILURE_ERROR_TYPES,
+)
 from .model_gateway import (
     DEFAULT_ROLE_POLICIES,
     AgentRole,
@@ -56,6 +63,7 @@ __all__ = [
     "AgentSessionState",
     "AgentRole",
     "AgentTask",
+    "AffectedFile",
     "BrowserProfile",
     "BrowserResult",
     "BrowserViewport",
@@ -67,6 +75,10 @@ __all__ = [
     "ContextManager",
     "DEFAULT_ROLE_POLICIES",
     "DockerSandboxRunner",
+    "FAILURE_ERROR_TYPES",
+    "FailureClassifier",
+    "FailureDigest",
+    "FailureEvidence",
     "FrontendGenerator",
     "FrontendProjectSpec",
     "GatewayCallRecord",

@@ -201,6 +201,9 @@ outputs/
 .sandbox/
 .worktrees/
 .scheduled_tasks.json
+data/evaluation/artifacts/
+data/evaluation/results/
+data/evaluation/workspaces/
 
 # Accidental root npm lockfile.
 /package-lock.json
