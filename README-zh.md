@@ -16,6 +16,7 @@ verification-first coding agent harness。
 - [第 6 步：验证代码质量设计](docs/verifier-zh.md)
 - [第 7 步：Docker Sandbox Runner 设计](docs/docker-sandbox-runner-zh.md)
 - [第 8 步：受控 Agent Workflow 状态机设计](docs/agent-workflow-state-machine-zh.md)
+- [第 9 步：失败反馈闭环设计](docs/failure-feedback-loop-zh.md)
 
 ```text
 用户需求
@@ -139,6 +140,7 @@ harness/
   verifier.py            # 已完成
   sandbox_runner.py      # 已完成
   workflow_state.py      # 下一步：受控状态机
+  failure_feedback.py    # 下一步：失败日志结构化和修复闭环
 ```
 
 `agents/s_full.py` 保持为主控入口；复杂运行时能力逐步拆到 `harness/`。
