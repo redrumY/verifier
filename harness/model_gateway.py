@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -56,6 +57,8 @@ class ProviderCredentials:
     anthropic_base_url: str | None = None
     openai_api_key: str | None = None
     openai_base_url: str | None = None
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ProviderCredentials":
@@ -65,6 +68,8 @@ class ProviderCredentials:
             anthropic_base_url=src.get("ANTHROPIC_BASE_URL"),
             openai_api_key=src.get("OPENAI_API_KEY"),
             openai_base_url=src.get("OPENAI_BASE_URL"),
+            deepseek_api_key=src.get("DEEPSEEK_API_KEY"),
+            deepseek_base_url=src.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com",
         )
 
 
@@ -80,6 +85,8 @@ class ModelPolicy:
     max_retries: int = 3
     input_cost_per_million: float = 0.0
     output_cost_per_million: float = 0.0
+    reasoning_effort: str | None = None
+    thinking: str | None = None
     use_llm: bool = True
 
     def with_overrides(self, **overrides: Any) -> "ModelPolicy":
@@ -157,10 +164,14 @@ def default_role_policies(env: Mapping[str, str] | None = None) -> dict[str, Mod
     """
 
     src = env or os.environ
-    default_provider = src.get("MODEL_PROVIDER", "anthropic")
-    strong = src.get("STRONG_MODEL_ID") or src.get("MODEL_ID", "")
+    default_provider = src.get("MODEL_PROVIDER") or ("deepseek" if src.get("DEEPSEEK_API_KEY") else "anthropic")
+    deepseek_strong = src.get("DEEPSEEK_MODEL_ID") or "deepseek-v4-pro"
+    deepseek_cheap = src.get("DEEPSEEK_CHEAP_MODEL_ID") or "deepseek-v4-flash"
+    strong_default = deepseek_strong if default_provider == "deepseek" else ""
+    cheap_default = deepseek_cheap if default_provider == "deepseek" else ""
+    strong = src.get("STRONG_MODEL_ID") or src.get("MODEL_ID", strong_default)
     medium = src.get("MEDIUM_MODEL_ID") or strong
-    cheap = src.get("CHEAP_MODEL_ID") or src.get("FALLBACK_MODEL_ID") or medium
+    cheap = src.get("CHEAP_MODEL_ID") or src.get("FALLBACK_MODEL_ID") or cheap_default or medium
     default_budget = _env_int(src, "MODEL_GATEWAY_TOKEN_BUDGET", 200_000)
 
     def model_for(role: str, fallback: str) -> str:
@@ -176,6 +187,20 @@ def default_role_policies(env: Mapping[str, str] | None = None) -> dict[str, Mod
         key = f"{role.upper()}_{direction.upper()}_COST_PER_MILLION"
         return _env_float(src, key, 0.0)
 
+    def reasoning_effort(role: str) -> str | None:
+        return (
+            src.get(f"{role.upper()}_REASONING_EFFORT")
+            or src.get("DEEPSEEK_REASONING_EFFORT")
+            or ("high" if provider_for(role) == "deepseek" and role in {"planner", "coder", "reviewer"} else None)
+        )
+
+    def thinking(role: str) -> str | None:
+        return (
+            src.get(f"{role.upper()}_THINKING")
+            or src.get("DEEPSEEK_THINKING")
+            or ("enabled" if provider_for(role) == "deepseek" and role in {"planner", "coder", "reviewer"} else None)
+        )
+
     return {
         "planner": ModelPolicy(
             provider=provider_for("planner"),
@@ -185,6 +210,8 @@ def default_role_policies(env: Mapping[str, str] | None = None) -> dict[str, Mod
             token_budget=budget_for("planner"),
             input_cost_per_million=price("planner", "input"),
             output_cost_per_million=price("planner", "output"),
+            reasoning_effort=reasoning_effort("planner"),
+            thinking=thinking("planner"),
         ),
         "coder": ModelPolicy(
             provider=provider_for("coder"),
@@ -194,6 +221,8 @@ def default_role_policies(env: Mapping[str, str] | None = None) -> dict[str, Mod
             token_budget=budget_for("coder"),
             input_cost_per_million=price("coder", "input"),
             output_cost_per_million=price("coder", "output"),
+            reasoning_effort=reasoning_effort("coder"),
+            thinking=thinking("coder"),
         ),
         "tester": ModelPolicy(
             provider=provider_for("tester"),
@@ -203,6 +232,8 @@ def default_role_policies(env: Mapping[str, str] | None = None) -> dict[str, Mod
             token_budget=budget_for("tester"),
             input_cost_per_million=price("tester", "input"),
             output_cost_per_million=price("tester", "output"),
+            reasoning_effort=reasoning_effort("tester"),
+            thinking=thinking("tester"),
         ),
         "reviewer": ModelPolicy(
             provider=provider_for("reviewer"),
@@ -212,6 +243,8 @@ def default_role_policies(env: Mapping[str, str] | None = None) -> dict[str, Mod
             token_budget=budget_for("reviewer"),
             input_cost_per_million=price("reviewer", "input"),
             output_cost_per_million=price("reviewer", "output"),
+            reasoning_effort=reasoning_effort("reviewer"),
+            thinking=thinking("reviewer"),
         ),
         "summarizer": ModelPolicy(
             provider=provider_for("summarizer"),
@@ -221,6 +254,8 @@ def default_role_policies(env: Mapping[str, str] | None = None) -> dict[str, Mod
             token_budget=budget_for("summarizer"),
             input_cost_per_million=price("summarizer", "input"),
             output_cost_per_million=price("summarizer", "output"),
+            reasoning_effort=reasoning_effort("summarizer"),
+            thinking=thinking("summarizer"),
         ),
         "verifier": ModelPolicy(
             provider="none",
@@ -257,13 +292,141 @@ def _usage_from_response(response: Any) -> dict[str, int]:
 def _response_content(response: Any) -> Any:
     if isinstance(response, dict):
         return response.get("content") or response.get("output") or response
+    if hasattr(response, "choices"):
+        choices = getattr(response, "choices") or []
+        if choices:
+            message = getattr(choices[0], "message", None)
+            content = getattr(message, "content", None)
+            if content is not None:
+                return content
     return getattr(response, "content", response)
 
 
 def _response_stop_reason(response: Any) -> str | None:
     if isinstance(response, dict):
         return response.get("stop_reason") or response.get("finish_reason")
+    if hasattr(response, "choices"):
+        choices = getattr(response, "choices") or []
+        if choices:
+            return getattr(choices[0], "finish_reason", None)
     return getattr(response, "stop_reason", None)
+
+
+def _block_get(block: Any, key: str, default: Any = None) -> Any:
+    if isinstance(block, dict):
+        return block.get(key, default)
+    return getattr(block, key, default)
+
+
+def _openai_tools(tools: list[dict] | None) -> list[dict] | None:
+    if tools is None:
+        return None
+    converted = []
+    for tool in tools:
+        if tool.get("type") == "function":
+            converted.append(tool)
+            continue
+        converted.append({
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get("input_schema", {
+                    "type": "object",
+                    "properties": {},
+                }),
+            },
+        })
+    return converted
+
+
+def _openai_messages(messages: list[dict], system: str | None = None) -> list[dict]:
+    converted: list[dict] = []
+    if system is not None:
+        converted.append({"role": "system", "content": system})
+    for message in messages:
+        role = message.get("role", "user")
+        content = message.get("content", "")
+        if isinstance(content, list):
+            converted.extend(_openai_messages_from_blocks(role, content))
+        else:
+            converted.append({"role": role, "content": str(content)})
+    return converted
+
+
+def _openai_messages_from_blocks(role: str, blocks: list[Any]) -> list[dict]:
+    if role == "assistant":
+        text_parts: list[str] = []
+        tool_calls: list[dict] = []
+        for block in blocks:
+            block_type = _block_get(block, "type")
+            if block_type == "text":
+                text_parts.append(str(_block_get(block, "text", "")))
+            elif block_type == "tool_use":
+                tool_calls.append({
+                    "id": str(_block_get(block, "id")),
+                    "type": "function",
+                    "function": {
+                        "name": str(_block_get(block, "name")),
+                        "arguments": json.dumps(_block_get(block, "input", {}), ensure_ascii=False),
+                    },
+                })
+        item = {"role": "assistant", "content": "\n".join(text_parts) or None}
+        if tool_calls:
+            item["tool_calls"] = tool_calls
+        return [item]
+    if role == "user":
+        converted: list[dict] = []
+        text_parts: list[str] = []
+        for block in blocks:
+            block_type = _block_get(block, "type")
+            if block_type == "tool_result":
+                converted.append({
+                    "role": "tool",
+                    "tool_call_id": str(_block_get(block, "tool_use_id")),
+                    "content": str(_block_get(block, "content", "")),
+                })
+            elif block_type == "text":
+                text_parts.append(str(_block_get(block, "text", "")))
+            else:
+                text_parts.append(str(block))
+        if text_parts:
+            converted.insert(0, {"role": "user", "content": "\n".join(text_parts)})
+        return converted
+    return [{"role": role, "content": "\n".join(str(block) for block in blocks)}]
+
+
+def _normalize_openai_chat_response(response: Any) -> Any:
+    choices = getattr(response, "choices", []) or []
+    if not choices:
+        return response
+    choice = choices[0]
+    message = getattr(choice, "message", None)
+    blocks: list[Any] = []
+    text = getattr(message, "content", None)
+    if text:
+        blocks.append(SimpleNamespace(type="text", text=text))
+    tool_calls = getattr(message, "tool_calls", None) or []
+    for tool_call in tool_calls:
+        function = getattr(tool_call, "function", None)
+        arguments = getattr(function, "arguments", "{}") or "{}"
+        try:
+            parsed_arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            parsed_arguments = {"_raw": arguments}
+        blocks.append(SimpleNamespace(
+            type="tool_use",
+            id=getattr(tool_call, "id", ""),
+            name=getattr(function, "name", ""),
+            input=parsed_arguments,
+        ))
+    stop_reason = "tool_use" if tool_calls else getattr(choice, "finish_reason", None)
+    return SimpleNamespace(
+        content=blocks,
+        stop_reason=stop_reason,
+        usage=getattr(response, "usage", None),
+        provider_raw=response,
+    )
 
 
 def _is_retryable_error(exc: Exception) -> bool:
@@ -335,17 +498,23 @@ class ModelGateway:
                 kwargs["base_url"] = credentials.anthropic_base_url
             clients["anthropic"] = Anthropic(**kwargs)
 
-        if "openai" in provider_names:
+        if "openai" in provider_names or "deepseek" in provider_names:
             try:
                 from openai import OpenAI
             except ImportError as exc:
-                raise ModelGatewayError("openai package is required for OpenAI policies") from exc
+                raise ModelGatewayError("openai package is required for OpenAI-compatible policies") from exc
+        if "openai" in provider_names:
             kwargs = {}
             if credentials.openai_api_key:
                 kwargs["api_key"] = credentials.openai_api_key
             if credentials.openai_base_url:
                 kwargs["base_url"] = credentials.openai_base_url
             clients["openai"] = OpenAI(**kwargs)
+        if "deepseek" in provider_names:
+            kwargs = {"base_url": credentials.deepseek_base_url or "https://api.deepseek.com"}
+            if credentials.deepseek_api_key:
+                kwargs["api_key"] = credentials.deepseek_api_key
+            clients["deepseek"] = OpenAI(**kwargs)
 
         concurrency = max_concurrent or _env_int(src, "MODEL_GATEWAY_MAX_CONCURRENT", 4)
         return cls(
@@ -473,7 +642,7 @@ class ModelGateway:
             if tools is not None:
                 kwargs["tools"] = tools
             return client.messages.create(**kwargs)
-        if policy.provider == "openai":
+        if policy.provider in {"openai", "deepseek"}:
             return self._dispatch_openai(client, policy, messages, system, tools)
         raise ModelGatewayError(f"Unsupported provider '{policy.provider}'")
 
@@ -485,30 +654,35 @@ class ModelGateway:
         system: str | None,
         tools: list[dict] | None,
     ) -> Any:
-        if hasattr(client, "responses"):
-            input_payload = list(messages)
-            if system is not None:
-                input_payload = [{"role": "system", "content": system}, *input_payload]
+        if policy.provider != "deepseek" and hasattr(client, "responses"):
+            input_payload = _openai_messages(messages, system=system)
             kwargs: dict[str, Any] = {
                 "model": policy.model,
                 "input": input_payload,
                 "max_output_tokens": policy.max_tokens,
                 "temperature": policy.temperature,
             }
-            if tools is not None:
-                kwargs["tools"] = tools
+            converted_tools = _openai_tools(tools)
+            if converted_tools is not None:
+                kwargs["tools"] = converted_tools
             return client.responses.create(**kwargs)
         if hasattr(client, "chat"):
-            chat_messages = list(messages)
-            if system is not None:
-                chat_messages = [{"role": "system", "content": system}, *chat_messages]
+            chat_messages = _openai_messages(messages, system=system)
             kwargs = {
                 "model": policy.model,
                 "messages": chat_messages,
                 "max_tokens": policy.max_tokens,
                 "temperature": policy.temperature,
             }
-            return client.chat.completions.create(**kwargs)
+            converted_tools = _openai_tools(tools)
+            if converted_tools is not None:
+                kwargs["tools"] = converted_tools
+            if policy.provider == "deepseek":
+                if policy.reasoning_effort:
+                    kwargs["reasoning_effort"] = policy.reasoning_effort
+                if policy.thinking:
+                    kwargs["extra_body"] = {"thinking": {"type": policy.thinking}}
+            return _normalize_openai_chat_response(client.chat.completions.create(**kwargs))
         raise ModelGatewayError("OpenAI client must expose responses or chat.completions")
 
     def _reserve_budget(self, role: str, policy: ModelPolicy, tokens: int):

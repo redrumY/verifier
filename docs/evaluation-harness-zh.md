@@ -702,6 +702,7 @@ data/
 
 eval/
   run_eval.py
+  probe_external_project.py
   scorecard.py
   replay_runner.py
 ```
@@ -773,6 +774,7 @@ python3 -m pytest -q
 - 一个 `eval/run_eval.py`
 - 输出一个 `scorecard.json`
 - README 放一段评估结果
+- 对一个外部 GitHub 前后端项目跑 `probe_external_project.py`
 
 最小指标：
 
@@ -794,3 +796,39 @@ python3 -m pytest -q
 ```
 
 这已经足够支撑面试里的工程性回答。
+
+## 13. 外部 GitHub 项目探针
+
+除了固定 fixture，还需要拿真实 GitHub 项目跑一轮探针。探针的目标不是马上让 agent
+完全自主改完功能，而是看 harness 面对真实项目时能不能产出：
+
+- 项目结构摘要
+- 前端/后端栈识别
+- UI + API 任务包
+- 验收标准
+- 相关文件列表
+- sandbox profile
+- 当前能力缺口
+
+命令：
+
+```sh
+python eval/probe_external_project.py /path/to/fullstack-project --frontend-dir frontend
+```
+
+输出：
+
+```text
+data/evaluation/results/<run_id>/agent-probe.json
+```
+
+这一步会暴露真实工程中的不匹配。例如一个项目是 Create React App，而当前 sandbox
+浏览器验证默认假设 Vite 的 `npm run dev`，那么探针不应该假装可以验证浏览器，而应该在
+profile metadata 里记录：
+
+```text
+CRA needs profile-level start command support.
+```
+
+这正是 evaluation 的意义：不是证明系统完美，而是用真实项目把下一步要修的 harness
+缺口暴露出来。

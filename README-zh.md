@@ -18,6 +18,7 @@ verification-first coding agent harness。
 - [第 8 步：受控 Agent Workflow 状态机设计](docs/agent-workflow-state-machine-zh.md)
 - [第 9 步：失败反馈闭环设计](docs/failure-feedback-loop-zh.md)
 - [第 10 步：工程化效果验证设计](docs/evaluation-harness-zh.md)
+- [DeepSeek v4 Pro 接入 ModelGateway 设计](docs/deepseek-gateway-zh.md)
 
 ```text
 用户需求
@@ -89,12 +90,24 @@ call_model("coder", messages, system=..., tools=...)
 
 ```sh
 ANTHROPIC_API_KEY=...
+DEEPSEEK_API_KEY=...
 MODEL_ID=...
 STRONG_MODEL_ID=...
 MEDIUM_MODEL_ID=...
 CHEAP_MODEL_ID=...
 MODEL_GATEWAY_MAX_CONCURRENT=4
 MODEL_GATEWAY_TOKEN_BUDGET=200000
+```
+
+DeepSeek v4 Pro 推荐配置：
+
+```sh
+MODEL_PROVIDER=deepseek
+DEEPSEEK_MODEL_ID=deepseek-v4-pro
+DEEPSEEK_CHEAP_MODEL_ID=deepseek-v4-flash
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_THINKING=enabled
+DEEPSEEK_REASONING_EFFORT=high
 ```
 
 也可以按角色覆盖，例如：
@@ -144,6 +157,7 @@ harness/
   failure_feedback.py    # 已完成：失败日志结构化和修复闭环基础分类器
 eval/
   run_eval.py            # 已完成：固定任务集 replay 和 scorecard
+  probe_external_project.py # 已完成：外部 GitHub 项目任务包和 sandbox 探针
 ```
 
 `agents/s_full.py` 保持为主控入口；复杂运行时能力逐步拆到 `harness/`。
@@ -158,4 +172,10 @@ python -m pytest -q
 
 ```sh
 python eval/run_eval.py --run-id eval_smoke
+```
+
+探测外部前后端项目：
+
+```sh
+python eval/probe_external_project.py /path/to/fullstack-project --frontend-dir frontend
 ```

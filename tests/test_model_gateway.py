@@ -53,6 +53,50 @@ class FakeAnthropic:
         self.messages = messages
 
 
+class FakeOpenAIUsage:
+    prompt_tokens = 11
+    completion_tokens = 3
+
+
+class FakeOpenAIToolFunction:
+    name = "read_file"
+    arguments = "{\"path\":\"package.json\"}"
+
+
+class FakeOpenAIToolCall:
+    id = "call_123"
+    function = FakeOpenAIToolFunction()
+
+
+class FakeOpenAIMessage:
+    content = None
+    tool_calls = [FakeOpenAIToolCall()]
+
+
+class FakeOpenAIChoice:
+    message = FakeOpenAIMessage()
+    finish_reason = "tool_calls"
+
+
+class FakeOpenAIResponse:
+    choices = [FakeOpenAIChoice()]
+    usage = FakeOpenAIUsage()
+
+
+class FakeChatCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return FakeOpenAIResponse()
+
+
+class FakeOpenAIClient:
+    def __init__(self):
+        self.chat = types.SimpleNamespace(completions=FakeChatCompletions())
+
+
 def make_gateway(policy: ModelPolicy, fake_messages: FakeMessages, **kwargs) -> ModelGateway:
     return ModelGateway(
         policies={"planner": policy},
@@ -79,6 +123,19 @@ def test_default_role_policies_route_roles_from_env():
     assert policies["summarizer"].model == "claude-cheap"
     assert policies["verifier"].use_llm is False
     assert policies["planner"].token_budget == 12345
+
+
+def test_deepseek_env_selects_v4_pro_defaults():
+    policies = default_role_policies({
+        "DEEPSEEK_API_KEY": "secret",
+    })
+
+    assert policies["planner"].provider == "deepseek"
+    assert policies["coder"].provider == "deepseek"
+    assert policies["coder"].model == "deepseek-v4-pro"
+    assert policies["summarizer"].model == "deepseek-v4-flash"
+    assert policies["coder"].reasoning_effort == "high"
+    assert policies["coder"].thinking == "enabled"
 
 
 def test_call_uses_role_policy_and_writes_audit_log(tmp_path: Path):
@@ -119,6 +176,50 @@ def test_call_uses_role_policy_and_writes_audit_log(tmp_path: Path):
     assert logged["role"] == "planner"
     assert logged["status"] == "ok"
     assert logged["attempts"] == 1
+
+
+def test_deepseek_dispatch_uses_openai_compatible_chat_tools():
+    fake_client = FakeOpenAIClient()
+    policy = ModelPolicy(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        max_tokens=100,
+        token_budget=1000,
+        reasoning_effort="high",
+        thinking="enabled",
+    )
+    gateway = ModelGateway(
+        policies={"coder": policy},
+        clients={"deepseek": fake_client},
+        sleep_fn=lambda _seconds: None,
+        jitter_fn=lambda: 0.0,
+    )
+
+    response = gateway.call(
+        "coder",
+        [{"role": "user", "content": "inspect package"}],
+        system="system",
+        tools=[{
+            "name": "read_file",
+            "description": "Read a file",
+            "input_schema": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        }],
+    )
+
+    call = fake_client.chat.completions.calls[0]
+    assert call["model"] == "deepseek-v4-pro"
+    assert call["messages"][0] == {"role": "system", "content": "system"}
+    assert call["tools"][0]["type"] == "function"
+    assert call["tools"][0]["function"]["name"] == "read_file"
+    assert call["reasoning_effort"] == "high"
+    assert call["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert response.raw.stop_reason == "tool_use"
+    assert response.raw.content[0].type == "tool_use"
+    assert response.raw.content[0].input == {"path": "package.json"}
 
 
 def test_retryable_errors_are_retried():
